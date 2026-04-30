@@ -29,6 +29,12 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+          git config --global init.defaultBranch main
+
       - name: Run tests
         run: python -m unittest discover -s tests -v
 
@@ -59,9 +65,10 @@ jobs:
           sha = os.environ["SHA"]
           p = pathlib.Path("install.sh")
           src = p.read_text()
+          replacement = 'EXPECTED_SHA="$' + '{EXPECTED_SHA:-' + sha + '}"'
           new = re.sub(
               r'EXPECTED_SHA="\$\{EXPECTED_SHA:-[0-9a-f]{40}\}"',
-              f'EXPECTED_SHA="${{EXPECTED_SHA:-{sha}}}"',
+              replacement,
               src,
               count=1,
           )

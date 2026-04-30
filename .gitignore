@@ -28,7 +28,10 @@ env/
 .env.*
 
 # Local tooling / IDE
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/create-readme/
 .idea/
 .vscode/
 .DS_Store

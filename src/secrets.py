@@ -59,9 +59,17 @@ def scan_repo_for_risky_files(repo_dir: Path) -> list[Path]:
     """
     found: set[Path] = set()
     for pattern in _RISKY_GLOBS:
-        for match in repo_dir.rglob(pattern):
-            if match.is_file():
-                found.add(match)
+        if pattern.endswith("/**"):
+            dir_name = pattern[:-3]
+            for d in repo_dir.rglob(dir_name):
+                if d.is_dir():
+                    for f in d.rglob("*"):
+                        if f.is_file():
+                            found.add(f)
+        else:
+            for match in repo_dir.rglob(pattern):
+                if match.is_file():
+                    found.add(match)
     return sorted(found)
 
 
