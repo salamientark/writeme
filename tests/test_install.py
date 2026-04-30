@@ -249,6 +249,20 @@ class TestInstallLauncher(unittest.TestCase):
                       tmpdir_for_workdir=self.workdir_parent)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_stdin_reattach_branch_is_syntactically_valid(self) -> None:
+        # The /dev/tty reattach branch only triggers when stdin is a pipe AND
+        # a controlling TTY is open — hard to fake in isolated test envs.
+        # Instead, lint that the branch parses and reference the right symbols.
+        sh = INSTALL_SH.read_text()
+        self.assertIn("/dev/tty", sh)
+        self.assertIn("[[ ! -t 0 ]]", sh)
+        # bash -n: parse-only check.
+        result = subprocess.run(
+            ["bash", "-n", str(INSTALL_SH)],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

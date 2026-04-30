@@ -76,7 +76,11 @@ export XDG_STATE_HOME="$WORKDIR/state"
 export XDG_CACHE_HOME="$WORKDIR/cache"
 
 set +e
-python "$WORKDIR/program/gh_readme_pipeline.py" "$@"
+if [[ ! -t 0 ]] && (exec </dev/tty) 2>/dev/null; then
+  python "$WORKDIR/program/gh_readme_pipeline.py" "$@" < /dev/tty
+else
+  python "$WORKDIR/program/gh_readme_pipeline.py" "$@"
+fi
 EXIT_CODE=$?
 set -e
 exit "$EXIT_CODE"
