@@ -22,11 +22,18 @@ Pick repos from a TUI, let Claude draft a README for each, review the diff, and 
 ## Quick start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/f1e7661e3083b8fdc3cca316fecb7cb4f92bce55/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/latest/install.sh | bash
 ```
 
 > [!TIP]
-> For reproducible installs, pin a commit:
+> The `latest` branch always points at the most recent published release and ships with `EXPECTED_SHA` pre-pinned by CI.
+>
+> For a specific version:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/release/v0.1.2/install.sh | bash
+> ```
+>
+> For maximum reproducibility, pin a commit explicitly:
 > ```bash
 > EXPECTED_SHA=<40-char-sha> \
 >   curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/<sha>/install.sh | bash

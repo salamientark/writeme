@@ -99,6 +99,11 @@ jobs:
               install.sh gh_readme_pipeline.py
           fi
 
+      - name: Fast-forward latest branch
+        if: github.event_name == 'push' || github.event.inputs.dry_run != 'true'
+        run: |
+          git push origin "+HEAD:refs/heads/latest"
+
       - name: Dry-run summary
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
         run: |
