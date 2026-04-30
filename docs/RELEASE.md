@@ -51,7 +51,7 @@ gh release create "$VERSION" \
 
 ## 5. Verify
 
-- [ ] `curl -fsSL https://raw.githubusercontent.com/jiliac/github-readme-pipeline/$VERSION/install.sh | bash` on a clean VM.
+- [ ] `curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/$VERSION/install.sh | bash` on a clean VM.
 - [ ] Tampered SHA test: edit local `install.sh`, set wrong `EXPECTED_SHA`, run → exit `3`.
 - [ ] Confirm sandbox wiped on success, preserved on failure.
 

@@ -6,7 +6,7 @@ Interactive CLI to draft `README.md` files for your GitHub repos via Claude Code
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jiliac/github-readme-pipeline/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/main/install.sh | bash
 ```
 
 `install.sh` is a launcher, not an installer. It:
@@ -25,7 +25,7 @@ Pin a specific commit:
 
 ```bash
 EXPECTED_SHA=<40-char-sha> \
-  curl -fsSL https://raw.githubusercontent.com/jiliac/github-readme-pipeline/<sha>/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/<sha>/install.sh | bash
 ```
 
 Mismatch → exit `3` before any code runs.
@@ -135,8 +135,8 @@ preserved the sandbox; clean launcher runs always start from scratch.
 ## Development
 
 ```bash
-git clone https://github.com/jiliac/github-readme-pipeline
-cd github-readme-pipeline
+git clone https://github.com/salamientark/writeme
+cd writeme
 python -m unittest discover -s tests
 ```
 

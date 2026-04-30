@@ -4,7 +4,7 @@
 set -euo pipefail
 
 NUKE_ON_FAIL="${NUKE_ON_FAIL:-0}"
-REPO_URL="${REPO_URL:-https://github.com/jiliac/github-readme-pipeline}"
+REPO_URL="${REPO_URL:-https://github.com/salamientark/writeme}"
 REF="${REF:-main}"
 EXPECTED_SHA="${EXPECTED_SHA:-0000000000000000000000000000000000000000}"
 SKIP_DEP_CHECK="${SKIP_DEP_CHECK:-0}"
