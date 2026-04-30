@@ -22,7 +22,7 @@ Pick repos from a TUI, let Claude draft a README for each, review the diff, and 
 ## Quick start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/f1e7661e3083b8fdc3cca316fecb7cb4f92bce55/install.sh | bash
 ```
 
 > [!TIP]
