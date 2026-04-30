@@ -14,9 +14,14 @@ Per-version steps for cutting a `gh-readme-pipeline` release.
 ```bash
 VERSION=v0.1.0
 git tag -a "$VERSION" -m "Release $VERSION"
-SHA=$(git rev-parse "$VERSION")
+SHA=$(git rev-parse "$VERSION^{commit}")
 echo "$SHA"
 ```
+
+> **Important:** use `$VERSION^{commit}`, not `$VERSION`. Annotated tags
+> (`tag -a`) are objects with their own SHA; bare `rev-parse` returns the tag
+> object SHA, not the commit it points to. The launcher fetches the *commit* —
+> pinning the tag SHA causes exit `3` (mismatch) for every user.
 
 ## 3. Pin SHA in install.sh
 
@@ -54,6 +59,10 @@ gh release create "$VERSION" \
 - [ ] `curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/$VERSION/install.sh | bash` on a clean VM.
 - [ ] Tampered SHA test: edit local `install.sh`, set wrong `EXPECTED_SHA`, run → exit `3`.
 - [ ] Confirm sandbox wiped on success, preserved on failure.
+
+> **CDN cache:** `raw.githubusercontent.com` caches branch refs (~5 min). If you
+> re-push `release/$VERSION`, the tag URL serves stale content briefly. Either
+> wait, bust with `?$(date +%s)`, or fetch by commit SHA path (never cached).
 
 ## 6. Post-release
 
