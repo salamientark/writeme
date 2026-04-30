@@ -366,6 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     from src import safety, commit as commit_mod
     from src.fetch import fetch_repos
     from src.state import StateStore, xdg_state_dir, prompt_resume
+    from src.unpushed import scan_repos as scan_unpushed
     import src.tui as tui_mod
 
     ns = parse_args(argv)
@@ -458,6 +459,19 @@ def main(argv: list[str] | None = None) -> int:
 
         # End-of-run summary
         _print_summary(state_store)
+
+        # Unpushed-work scan: exit 2 if any clone is dirty or has unpushed commits
+        findings = scan_unpushed(ns.repos_dir)
+        if findings:
+            print("\nUnpushed/dirty work detected:", file=sys.stderr)
+            for f in findings:
+                bits = []
+                if f.dirty:
+                    bits.append("dirty")
+                if f.unpushed_commits:
+                    bits.append(f"{f.unpushed_commits} unpushed commit(s)")
+                print(f"  {f.path}: {', '.join(bits)}", file=sys.stderr)
+            return 2
 
     return 0
 
