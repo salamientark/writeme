@@ -6,7 +6,7 @@ set -euo pipefail
 NUKE_ON_FAIL="${NUKE_ON_FAIL:-0}"
 REPO_URL="${REPO_URL:-https://github.com/salamientark/writeme}"
 REF="${REF:-main}"
-EXPECTED_SHA="${EXPECTED_SHA:-e2007e9cf467849d2c914ed172d730f65af9f186}"
+EXPECTED_SHA="${EXPECTED_SHA:-a52e3c387ca9233f3450a75be67200b3ff6969d4}"
 SKIP_DEP_CHECK="${SKIP_DEP_CHECK:-0}"
 
 require_dep() {
