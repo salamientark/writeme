@@ -47,6 +47,7 @@ WORKDIR="$(mktemp -d -p "$BASE_DIR" writeme.XXXXXX)"
 chmod 700 "$WORKDIR"
 EXIT_CODE=1
 
+# shellcheck disable=SC2317  # cleanup is invoked via trap
 cleanup() {
   if [[ "$EXIT_CODE" == "0" || "$NUKE_ON_FAIL" == "1" ]]; then
     rm -rf "$WORKDIR"
