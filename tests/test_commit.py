@@ -779,5 +779,104 @@ class TestModeInResult(unittest.TestCase):
         self.assertIsNone(result.mode)
 
 
+class TestDirectPushExplicit(unittest.TestCase):
+    """CR-MED-3: direct mode push must be `git push origin HEAD` (explicit)."""
+
+    def test_direct_push_uses_origin_head(self):
+        captured = []
+
+        def runner(*args, **kwargs):
+            cmd = args[0]
+            captured.append(list(cmd))
+            return _make_completed(0)
+
+        with patch("subprocess.run", side_effect=runner):
+            commit_and_push(Path("/repo"), mode="direct", had_readme_before=False)
+
+        push_calls = [c for c in captured if c[:2] == ["git", "push"]]
+        self.assertEqual(len(push_calls), 1)
+        self.assertEqual(push_calls[0], ["git", "push", "origin", "HEAD"])
+
+
+class TestGitFailurePropagation(unittest.TestCase):
+    """CR-HIGH-2: non-zero git add/commit/checkout must surface as failed CommitResult."""
+
+    def test_pr_mode_checkout_failure(self):
+        def runner(*args, **kwargs):
+            cmd = args[0]
+            if cmd[:2] == ["git", "checkout"]:
+                return _make_completed(1, stderr="branch already exists")
+            return _make_completed(0)
+        with patch("subprocess.run", side_effect=runner):
+            r = commit_and_push(Path("/repo"), mode="pr", had_readme_before=False)
+        self.assertEqual(r.status, "failed")
+        self.assertIn("branch already exists", r.error or "")
+
+    def test_pr_mode_add_failure(self):
+        def runner(*args, **kwargs):
+            cmd = args[0]
+            if cmd[:2] == ["git", "add"]:
+                return _make_completed(2, stderr="path not in repo")
+            return _make_completed(0)
+        with patch("subprocess.run", side_effect=runner):
+            r = commit_and_push(Path("/repo"), mode="pr", had_readme_before=False)
+        self.assertEqual(r.status, "failed")
+
+    def test_direct_mode_commit_failure(self):
+        def runner(*args, **kwargs):
+            cmd = args[0]
+            if cmd[:2] == ["git", "commit"]:
+                return _make_completed(1, stderr="nothing to commit")
+            return _make_completed(0)
+        with patch("subprocess.run", side_effect=runner):
+            r = commit_and_push(Path("/repo"), mode="direct", had_readme_before=False)
+        self.assertEqual(r.status, "failed")
+        self.assertIn("nothing to commit", r.error or "")
+
+    def test_commit_only_add_failure(self):
+        def runner(*args, **kwargs):
+            cmd = args[0]
+            if cmd[:2] == ["git", "add"]:
+                return _make_completed(1, stderr="add boom")
+            return _make_completed(0)
+        with patch("subprocess.run", side_effect=runner):
+            r = commit_and_push(Path("/repo"), mode="commit-only", had_readme_before=False)
+        self.assertEqual(r.status, "failed")
+
+
+class TestCommitMessageNewlineRejection(unittest.TestCase):
+    """CRIT-2: commit_message containing \\n or \\r must be rejected."""
+
+    def test_rejects_newline(self):
+        result = commit_and_push(
+            Path("/repo"), mode="direct", had_readme_before=False,
+            commit_message="docs: ok\n--evil",
+        )
+        self.assertEqual(result.status, "failed")
+        self.assertIn("single line", (result.error or "").lower())
+
+    def test_rejects_carriage_return(self):
+        result = commit_and_push(
+            Path("/repo"), mode="pr", had_readme_before=False,
+            commit_message="x\rmore",
+        )
+        self.assertEqual(result.status, "failed")
+
+    def test_rejects_for_commit_only(self):
+        result = commit_and_push(
+            Path("/repo"), mode="commit-only", had_readme_before=False,
+            commit_message="x\ny",
+        )
+        self.assertEqual(result.status, "failed")
+
+    def test_accepts_single_line(self):
+        with patch("subprocess.run", return_value=_make_completed(0)):
+            result = commit_and_push(
+                Path("/repo"), mode="commit-only", had_readme_before=False,
+                commit_message="docs: fine single line",
+            )
+        self.assertNotEqual(result.status, "failed")
+
+
 if __name__ == "__main__":
     unittest.main()

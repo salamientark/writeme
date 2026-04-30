@@ -13,6 +13,10 @@ from typing import Generator
 _REPO_NAME_RE = re.compile(r'^[A-Za-z0-9._-]+$')
 _RESERVED_NAMES = frozenset({".", ".."})
 
+# CR-MED-4: strict github URL match — no extra path, no query, no whitespace.
+_HTTPS_URL_RE = re.compile(r'^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?$')
+_SSH_URL_RE = re.compile(r'^git@github\.com:[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?$')
+
 
 def validate_repo_name(name: str) -> None:
     """Raise ValueError if *name* is not a safe, single-component repository name.
@@ -39,9 +43,7 @@ def validate_ssh_url(url: str) -> None:
     """
     if not url:
         raise ValueError("clone URL must not be empty")
-    if url.startswith("git@github.com:"):
-        return
-    if url.startswith("https://github.com/"):
+    if _HTTPS_URL_RE.match(url) or _SSH_URL_RE.match(url):
         return
     raise ValueError(f"unexpected clone URL: {url!r}")
 

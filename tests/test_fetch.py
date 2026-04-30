@@ -481,79 +481,32 @@ class TestRateLimit(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestUserMismatch(unittest.TestCase):
-    """When GH_USER != authed login, input() is called for confirmation."""
+    """CR-HIGH-1: fetch_repos must NOT call input() for user-mismatch.
 
-    def _fetch_with_mismatch(self, confirm_response: str):
+    The pipeline _resolve_user() is the single source of truth.
+    """
+
+    def test_fetch_repos_never_prompts_on_mismatch(self):
         import src.fetch as fetch_mod
         stdout = _make_response([])
 
         def subprocess_side_effect(cmd, **kwargs):
-            if "--jq" in cmd:
-                res = MagicMock()
-                res.stdout = b"other_user\n"  # Different from GH_USER
-                res.returncode = 0
-                return res
-            return _subprocess_result(stdout)
-
-        input_mock = MagicMock(return_value=confirm_response)
-        with patch.object(fetch_mod.subprocess, "run", side_effect=subprocess_side_effect), \
-             patch.dict(os.environ, {"GH_USER": "my_user"}, clear=False), \
-             patch("src.fetch.input", input_mock):
-            fetch_mod.fetch_repos("my_user", limit=5)
-
-        return input_mock
-
-    def test_mismatch_calls_input_for_confirmation(self):
-        input_mock = self._fetch_with_mismatch("y")
-        input_mock.assert_called_once()
-
-    def test_no_mismatch_does_not_call_input(self):
-        import src.fetch as fetch_mod
-        stdout = _make_response([])
-
-        def side_effect(cmd, **kwargs):
-            if "--jq" in cmd:
-                res = MagicMock()
-                res.stdout = b"testuser\n"
-                res.returncode = 0
-                return res
             return _subprocess_result(stdout)
 
         input_mock = MagicMock()
-        with patch.object(fetch_mod.subprocess, "run", side_effect=side_effect), \
-             patch.dict(os.environ, {"GH_USER": "testuser"}, clear=False), \
-             patch("src.fetch.input", input_mock):
-            fetch_mod.fetch_repos("testuser", limit=5)
+        with patch.object(fetch_mod.subprocess, "run", side_effect=subprocess_side_effect), \
+             patch.dict(os.environ, {"GH_USER": "my_user"}, clear=False), \
+             patch("builtins.input", input_mock):
+            fetch_mod.fetch_repos("my_user", limit=5)
 
         input_mock.assert_not_called()
 
-    def test_mismatch_prompt_contains_both_usernames(self):
-        """The confirmation prompt must mention both the target user and the authed user."""
+    def test_check_user_mismatch_function_removed(self):
         import src.fetch as fetch_mod
-        stdout = _make_response([])
-        prompts = []
-
-        def subprocess_side_effect(cmd, **kwargs):
-            if "--jq" in cmd:
-                res = MagicMock()
-                res.stdout = b"authed_user\n"
-                res.returncode = 0
-                return res
-            return _subprocess_result(stdout)
-
-        def input_side_effect(prompt=""):
-            prompts.append(prompt)
-            return "y"
-
-        with patch.object(fetch_mod.subprocess, "run", side_effect=subprocess_side_effect), \
-             patch.dict(os.environ, {"GH_USER": "target_user"}, clear=False), \
-             patch("src.fetch.input", input_side_effect):
-            fetch_mod.fetch_repos("target_user", limit=5)
-
-        self.assertTrue(prompts, "input() was never called")
-        full_prompt = prompts[0]
-        self.assertIn("target_user", full_prompt)
-        self.assertIn("authed_user", full_prompt)
+        self.assertFalse(
+            hasattr(fetch_mod, "_check_user_mismatch"),
+            "CR-HIGH-1: _check_user_mismatch must be deleted",
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ Env-only
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import signal
@@ -300,7 +301,7 @@ def process_repo(
             result_error = review_result.reason
 
     except KeyboardInterrupt:
-        safety.ensure_clean(repo_dir)
+        # CR-MED-1: finally block handles ensure_clean; record then re-raise.
         _record("failed", error="KeyboardInterrupt")
         raise
 
@@ -418,12 +419,16 @@ def main(argv: list[str] | None = None) -> int:
         # GPG signing warning
         commit_mod.warn_gpg_signing()
 
-        # Fetch repositories
-        repos = fetch_repos(user, limit)
+        # Fetch repositories — CR-HIGH-3: surface as readable error, not traceback.
+        try:
+            repos = fetch_repos(user, limit)
+        except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
+            print(f"ERROR: failed to fetch repositories: {e}", file=sys.stderr)
+            return 1
 
         # Resume handling
         selected_repos = list(repos)
-        if ns.resume and state_store._state_file.exists():
+        if ns.resume and state_store.has_prior_state():
             processed = state_store.load_processed()
             if processed:
                 choice = prompt_resume(len(processed))

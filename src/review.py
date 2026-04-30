@@ -24,6 +24,7 @@ FSM Steps
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,24 @@ from src import safety, secrets
 # blast-radius guard still sees only README.md as changed.
 _PROGRAM_ROOT = Path(__file__).resolve().parent.parent
 _SKILL_SRC = _PROGRAM_ROOT / ".claude" / "skills" / "create-readme" / "SKILL.md"
+
+# RT-H2: only these keys (and CLAUDE_*, LC_*, XDG_* prefixes) are passed to claude.
+_CLAUDE_ENV_ALLOWLIST = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "TMPDIR",
+})
+_CLAUDE_ENV_PREFIXES = ("CLAUDE_", "LC_", "XDG_")
+
+
+def _scrub_env_for_claude() -> dict[str, str]:
+    """Return a minimal env dict for the claude subprocess.
+
+    Drops credential-like vars (tokens, keys, secrets, passwords) by allowlist.
+    """
+    out: dict[str, str] = {}
+    for k, v in os.environ.items():
+        if k in _CLAUDE_ENV_ALLOWLIST or k.startswith(_CLAUDE_ENV_PREFIXES):
+            out[k] = v
+    return out
 
 
 def _stage_skill(repo_dir: Path) -> None:
@@ -84,7 +103,7 @@ def _show_pager(text: str) -> None:
     Falls back to ``print(text)`` otherwise.
     """
     if sys.stdout.isatty() and shutil.which("less"):
-        subprocess.run(["less", "-R"], input=text, text=True)
+        subprocess.run(["less"], input=text, text=True)
     else:
         print(text)
 
@@ -141,6 +160,7 @@ def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess 
             check=False,
             capture_output=True,
             text=True,
+            env=_scrub_env_for_claude(),
         )
     except subprocess.TimeoutExpired:
         return None
@@ -151,28 +171,28 @@ def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess 
 def _blast_radius_ok(repo_dir: Path) -> tuple[bool, str]:
     """Check that only README.md was modified.
 
-    Returns (True, '') if only README.md changed (including newly created).
-    Returns (False, reason) otherwise.
+    Uses NUL-delimited git queries to avoid quoted-path parsing pitfalls.
+    Combines tracked changes (git diff --name-only -z) with untracked files
+    (git ls-files -z --others --exclude-standard) and asserts the set is
+    exactly {"README.md"}.
     """
-    result = subprocess.run(
-        ["git", "status", "--porcelain"],
+    diff = subprocess.run(
+        ["git", "diff", "--name-only", "-z", "--diff-filter=ACMRT", "HEAD"],
         cwd=repo_dir,
         check=False,
         capture_output=True,
         text=True,
     )
-    lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
-    if not lines:
-        return False, "claude_touched_other_files"  # nothing changed at all
-    # Each porcelain line is like " M README.md" or "?? README.md"
-    paths = set()
-    for line in lines:
-        # Porcelain v1: 2-char status + space + path (possibly with rename arrow)
-        parts = line.split()
-        if len(parts) >= 2:
-            # Handle rename "old -> new" format
-            path_part = parts[-1]
-            paths.add(path_part)
+    untracked = subprocess.run(
+        ["git", "ls-files", "-z", "--others", "--exclude-standard"],
+        cwd=repo_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    paths = {p for p in (diff.stdout + untracked.stdout).split("\0") if p}
+    if not paths:
+        return False, "claude_touched_other_files"
     if paths == {"README.md"}:
         return True, ""
     return False, "claude_touched_other_files"

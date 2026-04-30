@@ -36,12 +36,18 @@ def _make_completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> 
     return cp
 
 
-# Porcelain output for a single README change
-_PORCELAIN_README_ONLY = " M README.md\n"
-# Porcelain output touching README + another file (blast guard trip)
-_PORCELAIN_TWO_FILES = " M README.md\n M src/main.py\n"
-# Empty porcelain (no changes)
+# Legacy aliases — RT-H3 switched blast guard to git diff -z + git ls-files -z.
+# Helper now emits two CompletedProcess results (diff_z, ls_z) instead of one porcelain.
+# Symbols kept for any direct site uses; helper interprets them as the diff side.
+_PORCELAIN_README_ONLY = "README.md\0"
+_PORCELAIN_TWO_FILES = "README.md\0src/main.py\0"
 _PORCELAIN_EMPTY = ""
+
+# NUL-delimited fixtures (preferred names)
+_DIFF_README_ONLY = "README.md\0"
+_DIFF_TWO_FILES = "README.md\0src/main.py\0"
+_DIFF_EMPTY = ""
+_LS_EMPTY = ""
 
 
 # ---------------------------------------------------------------------------
@@ -50,37 +56,38 @@ _PORCELAIN_EMPTY = ""
 
 def _make_subprocess_side_effects(
     *,
-    extra_before_claude=None,   # list of CompletedProcess inserted before claude call
-    claude_result=None,          # what claude returns (default: returncode=0)
-    porcelain_output=_PORCELAIN_README_ONLY,
+    extra_before_claude=None,
+    claude_result=None,
+    porcelain_output=_DIFF_README_ONLY,
+    diff_output=None,
+    lsfiles_output=_LS_EMPTY,
     readme_content="# Generated README\n",
-    git_checkout_result=None,    # what git checkout returns (default: returncode=0)
+    git_checkout_result=None,
 ):
     """Build a deterministic side_effect list for subprocess.run calls.
 
-    Call order for a single iteration (step 2 → step 4):
+    Call order for a single iteration (RT-H3 — NUL-delim blast guard):
       0: git checkout -- README.md   (baseline restore)
       1: git clean -f README.md      (baseline restore)
       2: claude -p /create-readme …  (invoke claude)
-      3: git status --porcelain      (blast guard)
+      3: git diff --name-only -z     (blast guard, tracked changes)
+      4: git ls-files -z --others    (blast guard, untracked files)
     """
     results = []
     if extra_before_claude:
         results.extend(extra_before_claude)
 
-    # git checkout -- README.md
     co = git_checkout_result if git_checkout_result is not None else _make_completed(0)
     results.append(co)
-    # git clean -f README.md
     results.append(_make_completed(0))
 
-    # claude
     if claude_result is None:
         claude_result = _make_completed(0)
     results.append(claude_result)
 
-    # git status --porcelain
-    results.append(_make_completed(0, stdout=porcelain_output))
+    diff = diff_output if diff_output is not None else porcelain_output
+    results.append(_make_completed(0, stdout=diff))
+    results.append(_make_completed(0, stdout=lsfiles_output))
 
     return results
 
@@ -97,8 +104,9 @@ class TestShowPager(unittest.TestCase):
              patch("subprocess.run") as mock_run:
             mock_stdout.isatty.return_value = True
             _show_pager("hello")
+        # RT-M3: -R flag dropped to neutralise ANSI escape exploitation in README.
         mock_run.assert_called_once_with(
-            ["less", "-R"], input="hello", text=True
+            ["less"], input="hello", text=True
         )
 
     def test_falls_back_to_print_when_not_tty(self):
@@ -179,16 +187,18 @@ class TestBaselineRestoreInvariant(unittest.TestCase):
         iter1_checkout = _make_completed(0)
         iter1_clean = _make_completed(0)
         iter1_claude = _make_completed(0)
-        iter1_porcelain = _make_completed(0, stdout=_PORCELAIN_README_ONLY)
+        iter1_diff = _make_completed(0, stdout=_DIFF_README_ONLY)
+        iter1_ls = _make_completed(0, stdout=_LS_EMPTY)
 
         iter2_checkout = _make_completed(0)
         iter2_clean = _make_completed(0)
         iter2_claude = _make_completed(0)
-        iter2_porcelain = _make_completed(0, stdout=_PORCELAIN_README_ONLY)
+        iter2_diff = _make_completed(0, stdout=_DIFF_README_ONLY)
+        iter2_ls = _make_completed(0, stdout=_LS_EMPTY)
 
         subprocess_effects = [
-            iter1_checkout, iter1_clean, iter1_claude, iter1_porcelain,
-            iter2_checkout, iter2_clean, iter2_claude, iter2_porcelain,
+            iter1_checkout, iter1_clean, iter1_claude, iter1_diff, iter1_ls,
+            iter2_checkout, iter2_clean, iter2_claude, iter2_diff, iter2_ls,
         ]
 
         with patch("subprocess.run", side_effect=subprocess_effects) as mock_run, \
@@ -200,23 +210,18 @@ class TestBaselineRestoreInvariant(unittest.TestCase):
             result = review_loop(Path("/repo"), had_readme_before=True)
 
         calls = mock_run.call_args_list
-        # calls[0..1] = first baseline restore
-        # calls[2] = first claude
-        # calls[3] = first porcelain
-        # calls[4..5] = second baseline restore (redo entry)
-        # calls[6] = second claude
-        # calls[7] = second porcelain
-        self.assertEqual(len(calls), 8)
+        # 5 calls per iteration (RT-H3): checkout, clean, claude, diff, ls-files
+        self.assertEqual(len(calls), 10)
 
-        # Verify second baseline restore
-        self.assertEqual(calls[4], call(
+        # Verify second baseline restore (starts at index 5)
+        self.assertEqual(calls[5], call(
             ["git", "checkout", "--", "README.md"],
             cwd=Path("/repo"),
             check=False,
             capture_output=True,
             text=True,
         ))
-        self.assertEqual(calls[5], call(
+        self.assertEqual(calls[6], call(
             ["git", "clean", "-f", "README.md"],
             cwd=Path("/repo"),
             check=False,
@@ -340,7 +345,8 @@ class TestClaudeNonZeroExit(unittest.TestCase):
             _make_completed(0),   # git checkout
             _make_completed(0),   # git clean
             _make_completed(0),   # claude success
-            _make_completed(0, stdout=_PORCELAIN_README_ONLY),  # porcelain
+            _make_completed(0, stdout=_DIFF_README_ONLY),  # git diff -z
+            _make_completed(0, stdout=_LS_EMPTY),          # git ls-files -z
         ]
 
         with patch("subprocess.run", side_effect=subprocess_effects), \
@@ -400,8 +406,10 @@ class TestClaudeTimeout(unittest.TestCase):
                     raise subprocess.TimeoutExpired(cmd, timeout=300)
                 # Second call succeeds
                 return _make_completed(0)
-            if cmd[:3] == ["git", "status", "--porcelain"]:
-                return _make_completed(0, stdout=_PORCELAIN_README_ONLY)
+            if cmd[:3] == ["git", "diff", "--name-only"]:
+                return _make_completed(0, stdout=_DIFF_README_ONLY)
+            if cmd[:2] == ["git", "ls-files"]:
+                return _make_completed(0, stdout=_LS_EMPTY)
             return _make_completed(0)
 
         with patch("subprocess.run", side_effect=smart_side_effect) as mock_run, \
@@ -431,12 +439,13 @@ class TestClaudeTimeout(unittest.TestCase):
 class TestBlastRadiusGuard(unittest.TestCase):
 
     def test_two_changed_files_returns_failed(self):
-        """git status --porcelain shows 2 files → failed with ensure_clean called."""
+        """diff -z shows 2 files → failed with ensure_clean called."""
         subprocess_effects = [
             _make_completed(0),   # git checkout
             _make_completed(0),   # git clean
             _make_completed(0),   # claude
-            _make_completed(0, stdout=_PORCELAIN_TWO_FILES),  # porcelain: 2 files
+            _make_completed(0, stdout=_DIFF_TWO_FILES),  # diff -z: 2 files
+            _make_completed(0, stdout=_LS_EMPTY),        # ls-files -z
         ]
 
         with patch("subprocess.run", side_effect=subprocess_effects), \
@@ -449,12 +458,13 @@ class TestBlastRadiusGuard(unittest.TestCase):
         mock_ensure_clean.assert_called_once_with(Path("/repo"))
 
     def test_empty_porcelain_returns_failed(self):
-        """git status --porcelain shows no changes → claude did nothing → failed."""
+        """No changes → claude did nothing → failed."""
         subprocess_effects = [
             _make_completed(0),   # git checkout
             _make_completed(0),   # git clean
             _make_completed(0),   # claude
-            _make_completed(0, stdout=_PORCELAIN_EMPTY),  # no changes
+            _make_completed(0, stdout=_DIFF_EMPTY),  # diff -z empty
+            _make_completed(0, stdout=_LS_EMPTY),    # ls-files -z empty
         ]
 
         with patch("subprocess.run", side_effect=subprocess_effects), \
@@ -680,7 +690,8 @@ class TestRedoLoop(unittest.TestCase):
                 _make_completed(0),  # git checkout
                 _make_completed(0),  # git clean
                 _make_completed(0),  # claude
-                _make_completed(0, stdout=_PORCELAIN_README_ONLY),  # porcelain
+                _make_completed(0, stdout=_DIFF_README_ONLY),  # git diff -z
+                _make_completed(0, stdout=_LS_EMPTY),          # git ls-files -z
             ])
 
         with patch("subprocess.run", side_effect=subprocess_effects) as mock_run, \
@@ -803,6 +814,52 @@ class TestSkillStaging(unittest.TestCase):
             _unstage_skill(repo)
 
             self.assertTrue(other.exists(), "unrelated .claude file deleted")
+
+
+class TestClaudeEnvScrub(unittest.TestCase):
+    """RT-H2: claude subprocess must run with a scrubbed env (allowlist)."""
+
+    def test_invoke_claude_passes_allowlisted_env_only(self):
+        from src.review import _invoke_claude
+
+        captured = {}
+
+        def fake_run(*args, **kwargs):
+            captured["env"] = kwargs.get("env")
+            return _make_completed(0)
+
+        dirty_env = {
+            "PATH": "/usr/bin",
+            "HOME": "/home/u",
+            "USER": "u",
+            "GH_TOKEN": "secret-gh",
+            "GITHUB_TOKEN": "secret-gh2",
+            "ANTHROPIC_API_KEY": "secret-ak",
+            "AWS_SECRET_ACCESS_KEY": "secret-aws",
+            "MY_API_TOKEN": "secret-tok",
+            "SOMETHING_PASSWORD": "secret-pw",
+            "PRIVATE_KEY": "secret-key",
+            "LANG": "en_US.UTF-8",
+            "TERM": "xterm",
+            "CLAUDE_CONFIG_DIR": "/home/u/.claude",
+        }
+
+        with patch.dict("os.environ", dirty_env, clear=True), \
+             patch("subprocess.run", side_effect=fake_run), \
+             patch("src.review._stage_skill"), \
+             patch("src.review._unstage_skill"):
+            _invoke_claude(Path("/repo"), 60)
+
+        env = captured["env"]
+        self.assertIsNotNone(env, "claude must be invoked with explicit env=")
+        # Must drop secrets
+        for k in ("GH_TOKEN", "GITHUB_TOKEN", "ANTHROPIC_API_KEY",
+                  "AWS_SECRET_ACCESS_KEY", "MY_API_TOKEN",
+                  "SOMETHING_PASSWORD", "PRIVATE_KEY"):
+            self.assertNotIn(k, env, f"{k} must be scrubbed")
+        # Must keep allowlisted
+        for k in ("PATH", "HOME", "USER", "LANG", "TERM", "CLAUDE_CONFIG_DIR"):
+            self.assertIn(k, env, f"{k} must be passed through")
 
 
 if __name__ == "__main__":

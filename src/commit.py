@@ -151,6 +151,21 @@ def _git(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess:
     )
 
 
+def _check_git(
+    result: subprocess.CompletedProcess,
+    op: str,
+    mode: str,
+) -> CommitResult | None:
+    """Return failed CommitResult if *result* is non-zero, else None.
+
+    CR-HIGH-2: git operations were silently ignored before this helper.
+    """
+    if result.returncode == 0:
+        return None
+    err = result.stderr or f"git {op} failed (rc={result.returncode})"
+    return CommitResult(status="failed", mode=mode, pr_url=None, error=err)
+
+
 def _gh(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd,
@@ -174,9 +189,12 @@ def _run_pr_mode(
     """Execute PR mode: branch → add → commit → push → gh pr create."""
     branch = f"docs/readme-pipeline-{int(time.time())}"
 
-    _git(["git", "checkout", "-b", branch], repo_dir)
-    _git(["git", "add", "README.md"], repo_dir)
-    _git(["git", "commit", "-m", msg], repo_dir)
+    if (fail := _check_git(_git(["git", "checkout", "-b", branch], repo_dir), "checkout", "pr")):
+        return fail
+    if (fail := _check_git(_git(["git", "add", "README.md"], repo_dir), "add", "pr")):
+        return fail
+    if (fail := _check_git(_git(["git", "commit", "-m", msg], repo_dir), "commit", "pr")):
+        return fail
 
     if dry_run:
         return CommitResult(status="pr_opened", mode="pr", pr_url=None, error=None)
@@ -204,13 +222,15 @@ def _run_direct_mode(
     dry_run: bool,
 ) -> CommitResult:
     """Execute direct mode: add → commit → push (no branch creation)."""
-    _git(["git", "add", "README.md"], repo_dir)
-    _git(["git", "commit", "-m", msg], repo_dir)
+    if (fail := _check_git(_git(["git", "add", "README.md"], repo_dir), "add", "direct")):
+        return fail
+    if (fail := _check_git(_git(["git", "commit", "-m", msg], repo_dir), "commit", "direct")):
+        return fail
 
     if dry_run:
         return CommitResult(status="pushed", mode="direct", pr_url=None, error=None)
 
-    push_result = _git(["git", "push"], repo_dir)
+    push_result = _git(["git", "push", "origin", "HEAD"], repo_dir)
     if push_result.returncode != 0:
         return CommitResult(
             status="failed",
@@ -227,8 +247,10 @@ def _run_commit_only_mode(
     msg: str,
 ) -> CommitResult:
     """Execute commit-only mode: add → commit, no push."""
-    _git(["git", "add", "README.md"], repo_dir)
-    _git(["git", "commit", "-m", msg], repo_dir)
+    if (fail := _check_git(_git(["git", "add", "README.md"], repo_dir), "add", "commit-only")):
+        return fail
+    if (fail := _check_git(_git(["git", "commit", "-m", msg], repo_dir), "commit", "commit-only")):
+        return fail
     return CommitResult(status="commit_only", mode="commit-only", pr_url=None, error=None)
 
 
@@ -258,6 +280,15 @@ def commit_and_push(
     Returns:
         CommitResult with status, mode, pr_url (if applicable), and error.
     """
+    # CRIT-2: reject newline injection in commit_message before any git work.
+    if commit_message is not None and ("\n" in commit_message or "\r" in commit_message):
+        return CommitResult(
+            status="failed",
+            mode=mode,
+            pr_url=None,
+            error="commit_message must be single line",
+        )
+
     # Resolve mode
     resolved_mode = mode if mode is not None else _prompt_mode()
 

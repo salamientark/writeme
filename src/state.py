@@ -13,8 +13,12 @@ Public API:
 """
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+
+# RT-L1: GitHub username regex (1-39 chars, alnum or hyphen, no leading/trailing/double hyphen).
+_GH_USER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +71,9 @@ class StateStore:
     """
 
     def __init__(self, user: str, state_dir: Path | None = None) -> None:
+        # RT-L1: validate GH username — prevents path traversal via state filename.
+        if not _GH_USER_RE.match(user):
+            raise ValueError(f"invalid GitHub username: {user!r}")
         self._user = user
         self._state_dir = state_dir if state_dir is not None else xdg_state_dir()
         self._state_file = self._state_dir / f"state-{user}.jsonl"
@@ -112,6 +119,10 @@ class StateStore:
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
+
+    def has_prior_state(self) -> bool:
+        """Return True if the state file exists on disk (CR-LOW-1)."""
+        return self._state_file.exists()
 
     def _read_all(self) -> list[dict]:
         """Return all records from the state file; empty list if no file."""

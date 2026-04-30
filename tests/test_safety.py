@@ -97,6 +97,33 @@ class TestValidateSshUrl(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_ssh_url("git@evil.com:x/y.git")
 
+    # CR-MED-4: strict regex must reject malformed but prefix-matching URLs.
+    def test_rejects_https_with_extra_path(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_ssh_url("https://github.com/x/y/extra")
+
+    def test_rejects_https_with_query(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_ssh_url("https://github.com/x/y?ref=evil")
+
+    def test_rejects_https_at_user_injection(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_ssh_url("https://github.com/@evil/y")
+
+    def test_rejects_ssh_with_space(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_ssh_url("git@github.com:x/y .git")
+
+    def test_rejects_https_missing_repo(self) -> None:
+        with self.assertRaises(ValueError):
+            validate_ssh_url("https://github.com/x")
+
+    def test_accepts_https_with_dot_git(self) -> None:
+        validate_ssh_url("https://github.com/x/y.git")  # must not raise
+
+    def test_accepts_ssh_without_dot_git(self) -> None:
+        validate_ssh_url("git@github.com:x/y")  # must not raise
+
 
 class TestEnsureClean(unittest.TestCase):
     """Integration tests for ensure_clean using a real temp git repo."""

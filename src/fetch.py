@@ -153,24 +153,6 @@ def _fetch_page(
     return json.loads(result.stdout)
 
 
-def _check_user_mismatch(user: str) -> None:
-    """Prompt for confirmation if GH_USER differs from the authenticated login."""
-    import os
-    result = subprocess.run(
-        ["gh", "api", "user", "--jq", ".login"],
-        capture_output=True,
-        check=True,
-    )
-    authed_login = result.stdout.decode().strip()
-    if authed_login == user:
-        return
-    prompt = (
-        f"Operating on {user!r}'s repos but authenticated as {authed_login!r}. "
-        f"Continue? [y/N] "
-    )
-    input(prompt)
-
-
 def _disk_preflight(repos: list[Repo]) -> None:
     """Warn if estimated clone size exceeds 80% of available disk space."""
     total_kb = sum(r.disk_usage for r in repos)
@@ -222,10 +204,6 @@ def fetch_repos(user: str, limit: int) -> list[Repo]:
         )
         limit = HARD_LIMIT
 
-    # Step 2: user mismatch check
-    _check_user_mismatch(user)
-
-    # Step 3: paginate
     all_repos: list[Repo] = []
     cursor: str | None = None
 

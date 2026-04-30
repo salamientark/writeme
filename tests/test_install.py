@@ -54,6 +54,10 @@ def _run(env_overrides: dict, args: list[str] | None = None,
     # Default-skip dep check so existing tests don't need real gh/claude/uv.
     # Tests that exercise the dep check override this explicitly.
     env.setdefault("SKIP_DEP_CHECK", "1")
+    # RT-H1: tests using unpinned ref auto-allow unless explicitly overriding.
+    env.setdefault("WRITEME_ALLOW_UNPINNED", "1")
+    # RT-M1: tests assert workdir under TMPDIR; clear XDG_RUNTIME_DIR unless caller wants it.
+    env.pop("XDG_RUNTIME_DIR", None)
     env.update(env_overrides)
     return subprocess.run(
         ["bash", str(INSTALL_SH), *(args or [])],
@@ -246,6 +250,91 @@ class TestInstallLauncher(unittest.TestCase):
         # SKIP_DEP_CHECK=1 bypasses dep gating (used by tests).
         bare, _ = self._stub("import sys; sys.exit(0)\n")
         result = _run({"REPO_URL": str(bare), "REF": "main", "SKIP_DEP_CHECK": "1"},
+                      tmpdir_for_workdir=self.workdir_parent)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_workdir_uses_xdg_runtime_when_set(self) -> None:
+        # RT-M1: when XDG_RUNTIME_DIR is set, workdir is created under it.
+        bare, _ = self._stub("import sys, os; print(os.getcwd()); sys.exit(0)\n")
+        runtime = self.tmp_path / "xdgrun"
+        runtime.mkdir(mode=0o700)
+        env = {"REPO_URL": str(bare), "REF": "main",
+               "XDG_RUNTIME_DIR": str(runtime)}
+        result = _run(env, tmpdir_for_workdir=self.workdir_parent)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # No workdir under TMPDIR — should be under XDG_RUNTIME_DIR.
+        self.assertEqual(self._find_workdirs(), [])
+        leftover = list(runtime.glob("writeme.*"))
+        # On clean exit it's removed; only the absence-from-TMPDIR check matters here.
+        self.assertEqual(leftover, [])
+
+    def test_workdir_chmod_700(self) -> None:
+        # RT-M1: workdir root is mode 700 to bound exposure on shared /tmp.
+        body = textwrap.dedent("""
+            import os, sys, stat
+            # __file__ = WORKDIR/program/gh_readme_pipeline.py → workdir is parent.parent.
+            workdir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            mode = stat.S_IMODE(os.stat(workdir).st_mode)
+            print(f"MODE={oct(mode)}")
+            sys.exit(0 if mode == 0o700 else 1)
+        """).lstrip()
+        bare, _ = self._stub(body)
+        result = _run({"REPO_URL": str(bare), "REF": "main"},
+                      tmpdir_for_workdir=self.workdir_parent)
+        self.assertEqual(result.returncode, 0,
+                         f"stdout={result.stdout!r} stderr={result.stderr!r}")
+
+    def test_unpinned_warns_when_allowed(self) -> None:
+        # RT-H1: unpinned fallback path prints a loud warning to stderr.
+        bare, _ = self._stub("import sys; sys.exit(0)\n")
+        result = _run({"REPO_URL": str(bare), "REF": "main",
+                       "WRITEME_ALLOW_UNPINNED": "1"},
+                      tmpdir_for_workdir=self.workdir_parent)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("unpinned", result.stderr.lower())
+
+    def test_unpinned_aborts_without_tty_and_no_override(self) -> None:
+        # RT-H1: no controlling tty AND no WRITEME_ALLOW_UNPINNED → abort exit 5.
+        bare, _ = self._stub("import sys; sys.exit(0)\n")
+        # setsid runs in a new session w/o controlling tty → /dev/tty unreadable.
+        env = os.environ.copy()
+        env.update({
+            "REPO_URL": str(bare), "REF": "main",
+            "TMPDIR": str(self.workdir_parent),
+            "SKIP_DEP_CHECK": "1",
+            # explicit unset of the override
+            "WRITEME_ALLOW_UNPINNED": "",
+        })
+        result = subprocess.run(
+            ["setsid", "bash", str(INSTALL_SH)],
+            env=env, capture_output=True, text=True, check=False,
+            stdin=subprocess.DEVNULL,
+        )
+        self.assertEqual(result.returncode, 5,
+                         f"rc={result.returncode} stderr={result.stderr}")
+        self.assertIn("unpinned", result.stderr.lower())
+
+    def test_pinned_sha_no_unpinned_warning(self) -> None:
+        # RT-H1: pinned SHA path must not print the unpinned warning.
+        bare, sha = self._stub("import sys; sys.exit(0)\n")
+        result = _run({"REPO_URL": str(bare), "EXPECTED_SHA": sha,
+                       "WRITEME_ALLOW_UNPINNED": ""},
+                      tmpdir_for_workdir=self.workdir_parent)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("unpinned", result.stderr.lower())
+
+    def test_ref_rejects_injection_chars(self) -> None:
+        # CRIT-1: REF with shell metachar / option-like prefix must exit 4.
+        bare, _ = self._stub("import sys; sys.exit(0)\n")
+        for bad in ("--upload-pack=evil", "main;rm", "main`x`", "main$x", "-oProxy=x", "main with space"):
+            result = _run({"REPO_URL": str(bare), "REF": bad},
+                          tmpdir_for_workdir=self.workdir_parent)
+            self.assertEqual(result.returncode, 4, f"REF={bad!r} stderr={result.stderr}")
+
+    def test_ref_accepts_safe_branch(self) -> None:
+        # CRIT-1: REF made of safe chars must succeed.
+        bare, _ = self._stub("import sys; sys.exit(0)\n")
+        result = _run({"REPO_URL": str(bare), "REF": "main"},
                       tmpdir_for_workdir=self.workdir_parent)
         self.assertEqual(result.returncode, 0, result.stderr)
 

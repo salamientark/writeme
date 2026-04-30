@@ -9,6 +9,12 @@ REF="${REF:-main}"
 EXPECTED_SHA="${EXPECTED_SHA:-0000000000000000000000000000000000000000}"
 SKIP_DEP_CHECK="${SKIP_DEP_CHECK:-0}"
 
+# CRIT-1: validate REF — only allow safe git ref characters.
+if [[ ! "$REF" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+  echo "invalid REF: must match ^[A-Za-z0-9._/-]+$" >&2
+  exit 4
+fi
+
 require_dep() {
   local cmd="$1" hint="$2"
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -35,7 +41,10 @@ if [[ "$SKIP_DEP_CHECK" != "1" ]]; then
   fi
 fi
 
-WORKDIR="$(mktemp -d -t writeme.XXXXXX)"
+# RT-M1: prefer XDG_RUNTIME_DIR (per-user, mode 700) over /tmp; chmod 700 either way.
+BASE_DIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+WORKDIR="$(mktemp -d -p "$BASE_DIR" writeme.XXXXXX)"
+chmod 700 "$WORKDIR"
 EXIT_CODE=1
 
 cleanup() {
@@ -66,7 +75,19 @@ else
   if [[ "$EXPECTED_SHA" != "0000000000000000000000000000000000000000" && -n "$EXPECTED_SHA" ]]; then
     echo "warning: EXPECTED_SHA invalid format, falling back to ref=$REF" >&2
   fi
-  git clone -q --depth=1 --branch "$REF" "$REPO_URL" "$WORKDIR/program"
+  # RT-H1: branch fetch is unpinned; warn loudly and require explicit consent.
+  echo "WARNING: fetching unpinned ref '$REF' from $REPO_URL — repo writer can serve arbitrary code." >&2
+  if [[ "${WRITEME_ALLOW_UNPINNED:-0}" != "1" ]]; then
+    if ! { read -r confirm < /dev/tty; } 2>/dev/null; then
+      echo "no controlling tty for unpinned-ref confirmation; set WRITEME_ALLOW_UNPINNED=1 to override" >&2
+      exit 5
+    fi
+    if [[ "$confirm" != "yes" ]]; then
+      echo "aborted: unpinned ref not confirmed" >&2
+      exit 5
+    fi
+  fi
+  git clone -q --depth=1 "--branch=$REF" "$REPO_URL" "$WORKDIR/program"
 fi
 
 mkdir -p "$WORKDIR/repo" "$WORKDIR/state" "$WORKDIR/cache"

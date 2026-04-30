@@ -656,7 +656,7 @@ class TestProcessRepo(unittest.TestCase):
             self.assertIn("skipped", summary)
 
     def test_keyboard_interrupt_calls_ensure_clean(self):
-        """KeyboardInterrupt during review must trigger ensure_clean before re-raise."""
+        """KeyboardInterrupt during review must trigger ensure_clean (once, via finally)."""
         from gh_readme_pipeline import process_repo
 
         repo = _make_repo("interrupt-repo")
@@ -683,7 +683,8 @@ class TestProcessRepo(unittest.TestCase):
                         state_store=state_store,
                     )
 
-            mock_clean.assert_called()
+            # CR-MED-1: ensure_clean must be called exactly once (finally), not twice.
+            self.assertEqual(mock_clean.call_count, 1)
 
     def test_finally_always_calls_ensure_clean(self):
         """ensure_clean must be called in finally even on success."""
@@ -824,3 +825,43 @@ class TestMainOrchestration(unittest.TestCase):
                 result = main(["--repos-dir", str(repos_dir)])
 
         self.assertEqual(result, 0)
+
+
+class TestFetchFailureHandling(unittest.TestCase):
+    """CR-HIGH-3: fetch_repos errors must be caught and surfaced as stderr+rc=1."""
+
+    def _run_with_fetch_error(self, exc):
+        from gh_readme_pipeline import main
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = "testuser\n"
+        mock_proc.returncode = 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repos_dir = Path(tmp) / "repos"
+            state_dir = Path(tmp) / "state"
+            state_dir.mkdir()
+
+            with patch("subprocess.run", return_value=mock_proc), \
+                 patch("src.fetch.fetch_repos", side_effect=exc), \
+                 patch("src.commit.warn_gpg_signing"), \
+                 patch("src.safety.acquire_lock") as mock_lock, \
+                 patch("src.state.xdg_state_dir", return_value=state_dir):
+                mock_lock.return_value.__enter__ = MagicMock(return_value=None)
+                mock_lock.return_value.__exit__ = MagicMock(return_value=False)
+                return main(["--repos-dir", str(repos_dir)])
+
+    def test_called_process_error_returns_one(self):
+        rc = self._run_with_fetch_error(
+            subprocess.CalledProcessError(1, ["gh"], stderr=b"boom"),
+        )
+        self.assertEqual(rc, 1)
+
+    def test_json_decode_error_returns_one(self):
+        import json
+        rc = self._run_with_fetch_error(json.JSONDecodeError("bad", "x", 0))
+        self.assertEqual(rc, 1)
+
+    def test_key_error_returns_one(self):
+        rc = self._run_with_fetch_error(KeyError("data"))
+        self.assertEqual(rc, 1)

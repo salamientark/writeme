@@ -373,3 +373,67 @@ class TestPromptResume(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHasPriorState(unittest.TestCase):
+    """CR-LOW-1: StateStore exposes public has_prior_state() (no private attr access)."""
+
+    def test_returns_false_when_no_state_file(self):
+        from src.state import StateStore
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore("u", state_dir=Path(td))
+            self.assertFalse(store.has_prior_state())
+
+    def test_returns_true_after_record(self):
+        from src.state import StateStore
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore("u", state_dir=Path(td))
+            store.record("repo", "pushed")
+            self.assertTrue(store.has_prior_state())
+
+
+class TestGhUserValidation(unittest.TestCase):
+    """RT-L1: StateStore.__init__ validates GitHub username regex."""
+
+    def test_rejects_path_traversal(self):
+        from src.state import StateStore
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ValueError):
+                StateStore("../etc/passwd", state_dir=Path(td))
+
+    def test_rejects_slash(self):
+        from src.state import StateStore
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ValueError):
+                StateStore("a/b", state_dir=Path(td))
+
+    def test_rejects_empty(self):
+        from src.state import StateStore
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ValueError):
+                StateStore("", state_dir=Path(td))
+
+    def test_rejects_leading_hyphen(self):
+        from src.state import StateStore
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ValueError):
+                StateStore("-foo", state_dir=Path(td))
+
+    def test_rejects_double_hyphen(self):
+        from src.state import StateStore
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ValueError):
+                StateStore("foo--bar", state_dir=Path(td))
+
+    def test_rejects_too_long(self):
+        from src.state import StateStore
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ValueError):
+                StateStore("a" * 40, state_dir=Path(td))
+
+    def test_accepts_normal_username(self):
+        from src.state import StateStore
+        with tempfile.TemporaryDirectory() as td:
+            StateStore("octocat", state_dir=Path(td))
+            StateStore("user-name", state_dir=Path(td))
+            StateStore("a", state_dir=Path(td))
