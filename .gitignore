@@ -32,4 +32,8 @@ env/
 .idea/
 .vscode/
 .DS_Store
+
+# User files
 NOTES.md
+FUTURE-IMPROVEMENTS.md
+docs/SECURITY*

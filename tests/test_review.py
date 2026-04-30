@@ -767,5 +767,43 @@ class TestReviewResult(unittest.TestCase):
         self.assertEqual(r.status, "quit")
 
 
+# ---------------------------------------------------------------------------
+# Section 13: Skill staging into target repo .claude/
+# ---------------------------------------------------------------------------
+
+class TestSkillStaging(unittest.TestCase):
+
+    def test_stage_then_unstage_round_trip(self):
+        import tempfile
+        from src.review import _stage_skill, _unstage_skill
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _stage_skill(repo)
+            staged = repo / ".claude" / "skills" / "create-readme" / "SKILL.md"
+            self.assertTrue(staged.exists(), "skill not staged")
+            self.assertIn("create-readme", staged.read_text())
+
+            _unstage_skill(repo)
+            self.assertFalse(staged.exists(), "skill not removed")
+            self.assertFalse((repo / ".claude").exists(), ".claude dir not cleaned")
+
+    def test_unstage_preserves_preexisting_dot_claude(self):
+        """If target repo already has unrelated .claude content, keep it."""
+        import tempfile
+        from src.review import _stage_skill, _unstage_skill
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            other = repo / ".claude" / "settings.local.json"
+            other.parent.mkdir(parents=True)
+            other.write_text("{}")
+
+            _stage_skill(repo)
+            _unstage_skill(repo)
+
+            self.assertTrue(other.exists(), "unrelated .claude file deleted")
+
+
 if __name__ == "__main__":
     unittest.main()

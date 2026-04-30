@@ -33,6 +33,31 @@ from typing import Literal
 
 from src import safety, secrets
 
+# Skill bundled in this repo at <program_root>/.claude/skills/create-readme/.
+# Staged into each target repo before invoking claude, then removed so the
+# blast-radius guard still sees only README.md as changed.
+_PROGRAM_ROOT = Path(__file__).resolve().parent.parent
+_SKILL_SRC = _PROGRAM_ROOT / ".claude" / "skills" / "create-readme" / "SKILL.md"
+
+
+def _stage_skill(repo_dir: Path) -> None:
+    dst = repo_dir / ".claude" / "skills" / "create-readme" / "SKILL.md"
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(_SKILL_SRC, dst)
+    except OSError as e:
+        print(f"warning: could not stage create-readme skill: {e}", file=sys.stderr)
+
+
+def _unstage_skill(repo_dir: Path) -> None:
+    skill_dir = repo_dir / ".claude" / "skills" / "create-readme"
+    shutil.rmtree(skill_dir, ignore_errors=True)
+    for parent in (repo_dir / ".claude" / "skills", repo_dir / ".claude"):
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+
 # ---------------------------------------------------------------------------
 # Public types
 # ---------------------------------------------------------------------------
@@ -103,7 +128,11 @@ def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess 
     """Run claude and return its CompletedProcess.
 
     Returns None on TimeoutExpired (caller must handle).
+
+    Stages the bundled /create-readme skill into repo_dir/.claude/ so the
+    spawned claude session discovers it, then removes it after the run.
     """
+    _stage_skill(repo_dir)
     try:
         return subprocess.run(
             ["claude", "-p", "/create-readme", "--permission-mode", "acceptEdits"],
@@ -115,6 +144,8 @@ def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess 
         )
     except subprocess.TimeoutExpired:
         return None
+    finally:
+        _unstage_skill(repo_dir)
 
 
 def _blast_radius_ok(repo_dir: Path) -> tuple[bool, str]:
