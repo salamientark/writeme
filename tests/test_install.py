@@ -51,6 +51,9 @@ def _run(env_overrides: dict, args: list[str] | None = None,
     # Force install.sh's mktemp into a known parent so we can inspect it.
     if tmpdir_for_workdir is not None:
         env["TMPDIR"] = str(tmpdir_for_workdir)
+    # Default-skip dep check so existing tests don't need real gh/claude/uv.
+    # Tests that exercise the dep check override this explicitly.
+    env.setdefault("SKIP_DEP_CHECK", "1")
     env.update(env_overrides)
     return subprocess.run(
         ["bash", str(INSTALL_SH), *(args or [])],
@@ -178,6 +181,73 @@ class TestInstallLauncher(unittest.TestCase):
                       tmpdir_for_workdir=self.workdir_parent)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("invalid format", result.stderr)
+
+
+    def _shim_dir(self, tools: dict[str, str | None]) -> Path:
+        """Create an isolated PATH dir. ``tools`` maps name → script body or None
+        (None = symlink to system tool). bash is always linked so launcher runs."""
+        d = self.tmp_path / "shims"
+        d.mkdir(exist_ok=True)
+        # bash always — the launcher runs under bash.
+        bash_src = shutil.which("bash") or "/bin/bash"
+        if not (d / "bash").exists():
+            (d / "bash").symlink_to(bash_src)
+        for name, body in tools.items():
+            tgt = d / name
+            if tgt.exists() or tgt.is_symlink():
+                tgt.unlink()
+            if body is None:
+                src = shutil.which(name)
+                if src:
+                    tgt.symlink_to(src)
+            else:
+                tgt.write_text(body)
+                tgt.chmod(0o755)
+        return d
+
+    def _run_isolated(self, shim_dir: Path,
+                      env_extra: dict | None = None) -> subprocess.CompletedProcess:
+        env = {"REPO_URL": "ignored", "REF": "main", "PATH": str(shim_dir),
+               "SKIP_DEP_CHECK": ""}
+        if env_extra:
+            env.update(env_extra)
+        return _run(env, tmpdir_for_workdir=self.workdir_parent)
+
+    def test_dep_check_missing_gh(self) -> None:
+        # gh/claude/uv missing → exit 1, stderr names them.
+        d = self._shim_dir({"git": None, "mktemp": None, "rm": None, "python": None})
+        result = self._run_isolated(d)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("gh", result.stderr)
+        self.assertIn("missing", result.stderr.lower())
+
+    def test_dep_check_missing_claude(self) -> None:
+        d = self._shim_dir({
+            "git": None, "mktemp": None, "rm": None, "python": None,
+            "gh": "#!/usr/bin/env bash\nexit 0\n",
+            "uv": "#!/usr/bin/env bash\nexit 0\n",
+        })
+        result = self._run_isolated(d)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("claude", result.stderr)
+
+    def test_dep_check_gh_unauthenticated(self) -> None:
+        d = self._shim_dir({
+            "git": None, "mktemp": None, "rm": None, "python": None,
+            "uv": "#!/usr/bin/env bash\nexit 0\n",
+            "claude": "#!/usr/bin/env bash\nexit 0\n",
+            "gh": '#!/usr/bin/env bash\nif [[ "$1 $2" == "auth status" ]]; then exit 1; fi\nexit 0\n',
+        })
+        result = self._run_isolated(d)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("gh auth", result.stderr.lower())
+
+    def test_skip_dep_check(self) -> None:
+        # SKIP_DEP_CHECK=1 bypasses dep gating (used by tests).
+        bare, _ = self._stub("import sys; sys.exit(0)\n")
+        result = _run({"REPO_URL": str(bare), "REF": "main", "SKIP_DEP_CHECK": "1"},
+                      tmpdir_for_workdir=self.workdir_parent)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

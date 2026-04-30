@@ -7,6 +7,33 @@ NUKE_ON_FAIL="${NUKE_ON_FAIL:-0}"
 REPO_URL="${REPO_URL:-https://github.com/jiliac/github-readme-pipeline}"
 REF="${REF:-main}"
 EXPECTED_SHA="${EXPECTED_SHA:-0000000000000000000000000000000000000000}"
+SKIP_DEP_CHECK="${SKIP_DEP_CHECK:-0}"
+
+require_dep() {
+  local cmd="$1" hint="$2"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "missing dependency: $cmd" >&2
+    [[ -n "$hint" ]] && echo "  install: $hint" >&2
+    return 1
+  fi
+}
+
+if [[ "$SKIP_DEP_CHECK" != "1" ]]; then
+  fail=0
+  require_dep git    "https://git-scm.com/downloads"            || fail=1
+  require_dep mktemp "(coreutils)"                              || fail=1
+  require_dep gh     "https://cli.github.com/"                  || fail=1
+  require_dep claude "https://claude.com/claude-code"           || fail=1
+  require_dep uv     "https://docs.astral.sh/uv/"               || fail=1
+  require_dep python "https://www.python.org/downloads/"        || fail=1
+  if [[ "$fail" == "1" ]]; then
+    exit 1
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "gh auth: not authenticated. Run: gh auth login" >&2
+    exit 1
+  fi
+fi
 
 WORKDIR="$(mktemp -d -t writeme.XXXXXX)"
 EXIT_CODE=1
