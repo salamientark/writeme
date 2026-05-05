@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Literal
 
 from src import safety, secrets
+from src.ui import ReviewContext, UI
 
 # Skill bundled in this repo at <program_root>/.claude/skills/create-readme/.
 # Staged into each target repo before invoking claude, then removed so the
@@ -376,6 +377,10 @@ def review_loop(
     repo_dir: Path,
     had_readme_before: bool,
     claude_timeout: int = 300,
+    ui: UI | None = None,
+    repo_index: int = 1,
+    repo_total: int = 1,
+    repo_name: str = "",
 ) -> ReviewResult:
     """Run the full review FSM for one repository.
 
@@ -396,14 +401,25 @@ def review_loop(
 
     # Capture old README content once (before any modifications)
     old_content = _read_file(repo_dir / "README.md")
+    prev_draft: str | None = None  # last Claude output before a redo iteration
 
     # Main FSM loop
+    iteration = 0
     while True:
+        iteration += 1
         # Step 2: Baseline restore invariant
         _restore_baseline(repo_dir)
 
-        # Invoke Claude
-        proc = _invoke_claude(repo_dir, claude_timeout)
+        # Invoke Claude (with spinner if a UI was supplied)
+        spinner_label = (
+            f"{'Re-generating' if iteration > 1 else 'Generating'} README"
+            f"{f' for {repo_name}' if repo_name else ''}…"
+        )
+        if ui is not None:
+            with ui.spinner(spinner_label):
+                proc = _invoke_claude(repo_dir, claude_timeout)
+        else:
+            proc = _invoke_claude(repo_dir, claude_timeout)
 
         # Handle timeout
         if proc is None:
@@ -442,7 +458,24 @@ def review_loop(
             # Proceed to accept prompt with override
 
         # Step 5: Accept prompt with view toggles
-        outcome = _prompt_accept(repo_dir, had_readme_before, old_content, new_content)
+        if ui is not None:
+            ctx = ReviewContext(
+                repo_name=repo_name or repo_dir.name,
+                index=repo_index,
+                total=repo_total,
+                head_readme=old_content or None,
+                prev_draft=prev_draft,
+                current_draft=new_content,
+            )
+            choice = ui.show_review(ctx)
+            outcome = {
+                "accept": "accepted",
+                "redo": "redo",
+                "discard": "skipped",
+                "quit": "quit",
+            }.get(choice, "skipped")
+        else:
+            outcome = _prompt_accept(repo_dir, had_readme_before, old_content, new_content)
 
         if outcome == "accepted":
             return ReviewResult(status="accepted", reason=None)
@@ -451,6 +484,10 @@ def review_loop(
             safety.ensure_clean(repo_dir)
             return ReviewResult(status="skipped", reason="user_discarded")
 
-        # "redo" → loop back to step 2
-        # old_content stays the same (captured once at step 1)
+        if outcome == "quit":
+            safety.ensure_clean(repo_dir)
+            return ReviewResult(status="quit", reason="user_quit")
+
+        # "redo" → remember this draft as prev for next iteration
+        prev_draft = new_content
         continue
