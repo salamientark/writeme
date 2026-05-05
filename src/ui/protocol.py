@@ -33,6 +33,10 @@ class SummaryRow:
 
 
 class UI(Protocol):
+    def clear(self) -> None:
+        """Clear the terminal screen (no-op when not a TTY)."""
+        ...
+
     def show_intro(self) -> None: ...
 
     @contextmanager

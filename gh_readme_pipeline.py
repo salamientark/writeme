@@ -409,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
 
     ns = parse_args(argv)
     ui = make_ui(plain=ns.plain)
+    ui.clear()
 
     # --clean: remove repos dir and exit
     if ns.clean:

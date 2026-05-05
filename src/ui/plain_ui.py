@@ -17,6 +17,11 @@ from .range_parser import parse_selection
 
 
 class PlainUI:
+    def clear(self) -> None:
+        if sys.stdout.isatty():
+            sys.stdout.write("\033[2J\033[H")
+            sys.stdout.flush()
+
     def show_intro(self) -> None:
         print("writeme — generating READMEs…")
 

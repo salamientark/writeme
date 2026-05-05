@@ -82,6 +82,10 @@ class RichUI:
     def __init__(self) -> None:
         self.console = Console()
 
+    # -- clear -------------------------------------------------------------
+    def clear(self) -> None:
+        self.console.clear()
+
     # -- select_repos -----------------------------------------------------
     def select_repos(self, repos):
         """Rich-native repo selection screen."""
@@ -177,7 +181,7 @@ class RichUI:
         n_selected = len(state.selected)
 
         table = Table.grid(padding=(0, 1))
-        table.add_column(width=2)  # checkbox
+        table.add_column(width=3)  # checkbox
         table.add_column(no_wrap=True)
         table.add_column(no_wrap=True)
         table.add_column()
@@ -189,7 +193,7 @@ class RichUI:
 
         for idx in slice_indices:
             repo = state.repos[idx]
-            check = "■" if idx in state.selected else "□"
+            check = "[x]" if idx in state.selected else "[ ]"
             badge = Text("HAS README", style="green") if repo.had_readme_before else Text("")
             name = Text(repo.name)
             date = Text(repo.pushed_at, style="dim")
@@ -365,7 +369,7 @@ class RichUI:
     def _render_menu_panel(self, title: str, options: list[tuple[str, str]], cursor: int) -> Align:
         body = Text()
         for i, (_key, desc) in enumerate(options):
-            marker = "▸" if i == cursor else " "
+            marker = ">" if i == cursor else " "
             row_style = "bold cyan" if i == cursor else ""
             body.append(f"  {marker} {desc}\n", style=row_style)
         body.append("\n")
