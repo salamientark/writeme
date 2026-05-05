@@ -46,7 +46,7 @@ def _open_tty_rd():
 
 
 def _read_key(rd) -> str:
-    """Read a single key including arrow keys and PgUp/PgDn escape sequences."""
+    """Read a single key, including arrow / PgUp-Dn / SGR mouse sequences."""
     import termios
     import tty
     fd = rd.fileno()
@@ -58,7 +58,6 @@ def _read_key(rd) -> str:
             return ""
         if ch != b"\x1b":
             return ch.decode("utf-8", "ignore")
-        # ESC: read up to 5 more bytes for CSI sequences (\x1b[<digits>~ etc.)
         b1 = rd.read(1)
         if b1 != b"[":
             return "\x1b" + b1.decode("ascii", "ignore")
@@ -68,14 +67,40 @@ def _read_key(rd) -> str:
             if not b:
                 break
             seq += b
-            # Terminator: letter (A/B/C/D/H/F) or '~'
+            # CSI terminators: any letter (incl. mouse 'M'/'m') or '~'.
             if b.isalpha() or b == b"~":
                 break
-            if len(seq) > 8:
+            # Cap length so a stray ESC[ doesn't block forever.
+            if len(seq) > 32:
                 break
         return seq.decode("ascii", "ignore")
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _enable_mouse() -> None:
+    """Enable SGR-extended mouse reporting (wheel + click events)."""
+    sys.stdout.write("\x1b[?1000h\x1b[?1006h")
+    sys.stdout.flush()
+
+
+def _disable_mouse() -> None:
+    sys.stdout.write("\x1b[?1006l\x1b[?1000l")
+    sys.stdout.flush()
+
+
+def _parse_mouse_button(seq: str) -> int | None:
+    """Return SGR mouse button code from `\\x1b[<B;C;R[Mm]`, or None."""
+    if not seq.startswith("\x1b[<") or not seq[-1:] in ("M", "m"):
+        return None
+    inner = seq[3:-1]
+    parts = inner.split(";")
+    if not parts:
+        return None
+    try:
+        return int(parts[0])
+    except ValueError:
+        return None
 
 
 class RichUI:
@@ -321,6 +346,7 @@ class RichUI:
         offsets = [0] * len(_VIEWS)
         try:
             with self.console.screen() as screen:
+                _enable_mouse()
                 while True:
                     # Reserve 4 rows for panel borders + title/subtitle padding
                     viewport = max(3, self.console.size.height - 4)
@@ -330,6 +356,17 @@ class RichUI:
                     screen.update(panel)
                     key = _read_key(rd)
                     max_off = max(0, total - viewport)
+
+                    btn = _parse_mouse_button(key)
+                    if btn == 64:  # wheel up
+                        offsets[view_idx] = max(0, offsets[view_idx] - 3)
+                        continue
+                    if btn == 65:  # wheel down
+                        offsets[view_idx] = min(max_off, offsets[view_idx] + 3)
+                        continue
+                    if btn is not None:
+                        # Other mouse events (click, drag, etc.) — ignore.
+                        continue
 
                     if key == "\t":
                         view_idx = (view_idx + 1) % len(_VIEWS)
@@ -360,6 +397,7 @@ class RichUI:
                     elif key in ("q", "\x03"):
                         return "quit"
         finally:
+            _disable_mouse()
             try:
                 rd.close()
             except OSError:

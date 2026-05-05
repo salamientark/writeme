@@ -297,8 +297,8 @@ def commit_and_push(
         choice = ui.menu(
             "Push mode?",
             [
-                ("p", "PR (feature branch + gh pr create)"),
                 ("m", "direct to main/default branch"),
+                ("p", "PR (feature branch + gh pr create)"),
                 ("c", "commit only (no push)"),
                 ("n", "no commit (skip)"),
             ],
