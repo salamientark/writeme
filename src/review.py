@@ -143,6 +143,33 @@ def _restore_baseline(repo_dir: Path) -> None:
     )
 
 
+def _open_tty() -> int | None:
+    """Return fd for /dev/tty if available, else None."""
+    try:
+        return os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return None
+
+
+def _save_tty_attrs(fd: int):
+    """Return termios attrs for fd, or None if not a tty."""
+    try:
+        import termios
+        return termios.tcgetattr(fd)
+    except Exception:
+        return None
+
+
+def _restore_tty_attrs(fd: int, attrs) -> None:
+    if attrs is None:
+        return
+    try:
+        import termios
+        termios.tcsetattr(fd, termios.TCSADRAIN, attrs)
+    except Exception:
+        pass
+
+
 def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess | None:
     """Run claude and return its CompletedProcess.
 
@@ -152,6 +179,8 @@ def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess 
     spawned claude session discovers it, then removes it after the run.
     """
     _stage_skill(repo_dir)
+    tty_fd = _open_tty()
+    saved = _save_tty_attrs(tty_fd) if tty_fd is not None else None
     try:
         return subprocess.run(
             ["claude", "-p", "/create-readme", "--permission-mode", "acceptEdits"],
@@ -161,11 +190,18 @@ def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess 
             capture_output=True,
             text=True,
             env=_scrub_env_for_claude(),
+            stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
         return None
     finally:
         _unstage_skill(repo_dir)
+        if tty_fd is not None:
+            _restore_tty_attrs(tty_fd, saved)
+            try:
+                os.close(tty_fd)
+            except OSError:
+                pass
 
 
 def _blast_radius_ok(repo_dir: Path) -> tuple[bool, str]:
@@ -217,6 +253,20 @@ def _build_diff(old_content: str, new_content: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _tty_input(prompt: str) -> str:
+    """Read a line from /dev/tty, falling back to builtin input()."""
+    try:
+        with open("/dev/tty", "r+") as tty:
+            tty.write(prompt)
+            tty.flush()
+            line = tty.readline()
+            if line == "":
+                raise EOFError
+            return line.rstrip("\r\n")
+    except (OSError, EOFError):
+        return input(prompt)
+
+
 def _prompt_risky_files(risky: list[Path]) -> str:
     """Display risky-file warning and prompt [c]ontinue / [s]kip."""
     print(f"\nWARNING: found {len(risky)} risky file(s) in repo:")
@@ -225,7 +275,7 @@ def _prompt_risky_files(risky: list[Path]) -> str:
     if len(risky) > 10:
         print(f"  ... and {len(risky) - 10} more")
     while True:
-        raw = input("[c]ontinue / [s]kip > ").strip().lower()
+        raw = _tty_input("[c]ontinue / [s]kip > ").strip().lower()
         if raw in ("c", "s"):
             return raw
 
@@ -233,7 +283,7 @@ def _prompt_risky_files(risky: list[Path]) -> str:
 def _prompt_timeout() -> str:
     """Prompt after claude timeout: [r]etry / [s]kip / [q]uit."""
     while True:
-        raw = input("\nClaude timed out. [r]etry / [s]kip / [q]uit > ").strip().lower()
+        raw = _tty_input("\nClaude timed out. [r]etry / [s]kip / [q]uit > ").strip().lower()
         if raw in ("r", "s", "q"):
             return raw
 
@@ -241,7 +291,7 @@ def _prompt_timeout() -> str:
 def _prompt_nonzero() -> str:
     """Prompt after claude non-zero exit: [r]edo / [d]iscard."""
     while True:
-        raw = input("\nClaude exited with non-zero status. [r]edo / [d]iscard > ").strip().lower()
+        raw = _tty_input("\nClaude exited with non-zero status. [r]edo / [d]iscard > ").strip().lower()
         if raw in ("r", "d"):
             return raw
 
@@ -254,7 +304,7 @@ def _prompt_secret_override(matches: list[str]) -> str:
         print(f"  {m!r}")
     print("=" * 60)
     print("Type 'yes-i-checked' to accept anyway, or anything else to discard.")
-    raw = input("Override > ").strip()
+    raw = _tty_input("Override > ").strip()
     return raw
 
 
@@ -282,7 +332,7 @@ def _prompt_accept(
     )
 
     while True:
-        raw = input(prompt_str).strip()
+        raw = _tty_input(prompt_str).strip()
 
         if raw == "v":
             diff_text = _build_diff(old_content, new_content)
