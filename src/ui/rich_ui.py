@@ -83,6 +83,9 @@ class RichUI:
 
     # -- intro -------------------------------------------------------------
     def show_intro(self) -> None:
+        # Clear viewport + scrollback so the banner appears on a fresh page.
+        sys.stdout.write("\x1b[3J\x1b[H\x1b[2J")
+        sys.stdout.flush()
         body = Text()
         body.append(LOGO, style="bold cyan")
         body.append("\n")
@@ -147,9 +150,10 @@ class RichUI:
         end = min(offset + len(window), total)
         scroll_pos = f"lines {offset + 1}-{end}/{total}" if total else "empty"
         subtitle = (
-            f"{_VIEW_LABELS[view]}  ·  {scroll_pos}  ·  tab cycle  ·  j/k scroll  "
-            "·  PgUp/PgDn  ·  g/G top/bot  ·  1 diff/HEAD  ·  2 diff/prev  "
-            "·  v raw  ·  a accept  ·  r redo  ·  d discard  ·  q quit"
+            "a accept  ·  r redo  ·  d discard  ·  q quit  "
+            f"║  {_VIEW_LABELS[view]}  ·  {scroll_pos}  ·  tab cycle  "
+            "·  j/k scroll  ·  PgUp/PgDn  ·  g/G top/bot  "
+            "·  1 diff/HEAD  ·  2 diff/prev  ·  v raw"
         )
         panel = Panel(body, title=title, subtitle=subtitle, border_style="cyan")
         return panel, total
