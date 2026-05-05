@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator, Literal, Protocol
+from typing import TYPE_CHECKING, Iterator, Literal, Protocol
+
+if TYPE_CHECKING:
+    from src.selection import Repo
 
 
 @dataclass(frozen=True)
@@ -34,6 +37,13 @@ class UI(Protocol):
 
     @contextmanager
     def spinner(self, label: str) -> Iterator[None]: ...
+
+    def select_repos(self, repos: list["Repo"]) -> list["Repo"]:
+        """Display the repo selection screen. Returns chosen subset (ascending).
+
+        Empty list means user quit / nothing selected.
+        """
+        ...
 
     def show_review(self, ctx: ReviewContext) -> str:
         """Display review screen. Returns user choice: 'accept'|'redo'|'discard'|'quit'."""

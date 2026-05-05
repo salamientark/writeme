@@ -13,6 +13,7 @@ import sys
 from contextlib import contextmanager
 from typing import Iterator
 
+from rich.align import Align
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -81,11 +82,153 @@ class RichUI:
     def __init__(self) -> None:
         self.console = Console()
 
+    # -- select_repos -----------------------------------------------------
+    def select_repos(self, repos):
+        """Rich-native repo selection screen."""
+        repos = list(repos)
+        if not repos:
+            return []
+        return self._rich_select_repos(repos)
+
+    def _rich_select_repos(self, repos):
+        from src.selection import SelectionState
+        from .keys import open_tty_rd, read_key
+
+        rd = open_tty_rd()
+        if rd is None:
+            # No TTY — fall back to plain selection.
+            from .plain_ui import PlainUI
+            return PlainUI().select_repos(repos)
+
+        h = max(5, (self.console.size.height or 24) - 6)
+        state = SelectionState(
+            repos=tuple(repos),
+            cursor=0,
+            selected=frozenset(),
+            viewport_start=0,
+            viewport_height=h,
+            filter="",
+        )
+        filter_mode = False
+        try:
+            with Live(
+                self._render_select(state, filter_mode),
+                console=self.console,
+                screen=True,
+                refresh_per_second=20,
+                transient=True,
+            ) as live:
+                while True:
+                    live.update(self._render_select(state, filter_mode))
+                    k = read_key(rd)
+                    if k == "":
+                        return []
+                    if filter_mode:
+                        if k == "esc":
+                            filter_mode = False
+                            state = state.clear_filter()
+                        elif k == "enter":
+                            filter_mode = False
+                        elif k == "backspace":
+                            state = state.apply_filter(state.filter[:-1])
+                        elif len(k) == 1 and k.isprintable():
+                            state = state.apply_filter(state.filter + k)
+                        continue
+                    if k == "q":
+                        return []
+                    if k == "enter":
+                        return [state.repos[i] for i in sorted(state.selected)]
+                    if k == "/":
+                        filter_mode = True
+                        continue
+                    if k == "up":
+                        state = state.move(-1)
+                    elif k == "down":
+                        state = state.move(1)
+                    elif k == "space":
+                        state = state.toggle()
+                    elif k == "a":
+                        state = state.select_all()
+                    elif k == "n":
+                        state = state.select_none()
+                    elif k == "g":
+                        state = state.jump_top()
+                    elif k == "G":
+                        state = state.jump_bottom()
+                    elif k == "pgup":
+                        state = state.page_up()
+                    elif k == "pgdn":
+                        state = state.page_down()
+                    elif k == "j":
+                        state = state.move(1)
+                    elif k == "k":
+                        state = state.move(-1)
+        except KeyboardInterrupt:
+            return []
+        finally:
+            try:
+                rd.close()
+            except OSError:
+                pass
+
+    def _render_select(self, state, filter_mode: bool):
+        visible = state.visible_indices
+        n_total = len(state.repos)
+        n_selected = len(state.selected)
+
+        table = Table.grid(padding=(0, 1))
+        table.add_column(width=2)  # checkbox
+        table.add_column(no_wrap=True)
+        table.add_column(no_wrap=True)
+        table.add_column()
+
+        # Slice via viewport
+        start = state.viewport_start
+        end = start + state.viewport_height
+        slice_indices = visible[start:end]
+
+        for idx in slice_indices:
+            repo = state.repos[idx]
+            check = "■" if idx in state.selected else "□"
+            badge = Text("HAS README", style="green") if repo.had_readme_before else Text("")
+            name = Text(repo.name)
+            date = Text(repo.pushed_at, style="dim")
+            row_style = "reverse bold" if idx == state.cursor else ""
+            table.add_row(
+                Text(check, style=row_style),
+                Text(repo.name, style=row_style),
+                Text(repo.pushed_at, style=("reverse dim" if idx == state.cursor else "dim")),
+                Text("HAS README", style=("reverse green" if idx == state.cursor else "green"))
+                if repo.had_readme_before
+                else Text(""),
+            )
+
+        if filter_mode:
+            footer = Text(f"filter: {state.filter}_", style="yellow")
+        elif state.filter:
+            hidden = state.hidden_selected_count
+            footer = Text(
+                f"↑/↓ space toggle  / filter  enter confirm  esc clear   "
+                f"(filtered: {len(visible)} of {n_total}, {hidden} selected hidden)   "
+                f"{n_selected}/{n_total} selected",
+                style="cyan",
+            )
+        else:
+            footer = Text(
+                "↑/↓ move · space toggle · / filter · enter confirm · "
+                f"a all · n none · g/G top/bottom · q quit    {n_selected}/{n_total} selected",
+                style="cyan",
+            )
+
+        return Panel(
+            Group(table, Text(""), footer),
+            title="writeme — select repos",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+
     # -- intro -------------------------------------------------------------
     def show_intro(self) -> None:
-        # Clear viewport + scrollback so the banner appears on a fresh page.
-        sys.stdout.write("\x1b[3J\x1b[H\x1b[2J")
-        sys.stdout.flush()
         body = Text()
         body.append(LOGO, style="bold cyan")
         body.append("\n")
@@ -219,24 +362,24 @@ class RichUI:
                 pass
 
     # -- menu --------------------------------------------------------------
-    def _render_menu_panel(self, title: str, options: list[tuple[str, str]], cursor: int) -> Panel:
+    def _render_menu_panel(self, title: str, options: list[tuple[str, str]], cursor: int) -> Align:
         body = Text()
-        for i, (key, desc) in enumerate(options):
+        for i, (_key, desc) in enumerate(options):
             marker = "▸" if i == cursor else " "
             row_style = "bold cyan" if i == cursor else ""
-            body.append(f" {marker} ", style=row_style)
-            body.append(f"[{key}] ", style="bold yellow" if i == cursor else "yellow")
-            body.append(f"{desc}\n", style=row_style)
+            body.append(f"  {marker} {desc}\n", style=row_style)
         body.append("\n")
-        body.append("↑/↓ move · enter select · letter shortcut · q quit", style="dim")
-        return Panel(body, title=title, border_style="cyan", padding=(1, 2))
+        body.append("↑/↓ select · enter confirm · q", style="dim")
+        panel = Panel(body, title=title, border_style="cyan", padding=(1, 2), width=40)
+        return Align.center(panel, vertical="middle")
 
     def menu(self, title: str, options: list[tuple[str, str]]) -> str:
         if not options:
             return ""
-        rd = _open_tty_rd()
+        from .keys import open_tty_rd, read_key
+
+        rd = open_tty_rd()
         if rd is None or not sys.stdout.isatty():
-            # Fallback: line-based prompt
             self.console.print(Panel(title, border_style="cyan"))
             for key, desc in options:
                 self.console.print(f"  [{key}] {desc}")
@@ -253,14 +396,14 @@ class RichUI:
             with self.console.screen() as screen:
                 while True:
                     screen.update(self._render_menu_panel(title, options, cursor))
-                    key = _read_key(rd)
-                    if key in ("\x1b[A",):  # up
+                    key = read_key(rd)
+                    if key == "up":
                         cursor = (cursor - 1) % len(options)
-                    elif key in ("\x1b[B",):  # down
+                    elif key == "down":
                         cursor = (cursor + 1) % len(options)
-                    elif key in ("\r", "\n"):
+                    elif key == "enter":
                         return keys[cursor]
-                    elif key in ("q", "\x03"):
+                    elif key in ("q", ""):
                         return ""
                     elif key and key.lower() in (k.lower() for k in keys):
                         for k in keys:

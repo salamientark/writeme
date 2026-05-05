@@ -9,8 +9,11 @@ import sys
 from contextlib import contextmanager
 from typing import Iterator
 
+from src.selection import Repo
+
 from .protocol import ReviewContext, SummaryRow
 from . import diff as _diff
+from .range_parser import parse_selection
 
 
 class PlainUI:
@@ -21,6 +24,27 @@ class PlainUI:
     def spinner(self, label: str) -> Iterator[None]:
         print(label)
         yield
+
+    def select_repos(self, repos: list[Repo]) -> list[Repo]:
+        if not repos:
+            return []
+        print("Available repos:")
+        for i, r in enumerate(repos, start=1):
+            badge = "  [HAS README]" if r.had_readme_before else ""
+            print(f"  {i:>3}) {r.name:<30} {r.pushed_at}{badge}")
+        while True:
+            try:
+                raw = input("Select (e.g. 1,3,5-7, a=all, q=quit): ")
+            except EOFError:
+                return []
+            result = parse_selection(raw, len(repos))
+            if result.kind == "quit":
+                return []
+            if result.kind == "all":
+                return list(repos)
+            if result.kind == "ok":
+                return [repos[i] for i in sorted(result.indices)]
+            print(f"error: {result.message}")
 
     def show_review(self, ctx: ReviewContext) -> str:
         """Plain-text review: print current draft + diff vs HEAD, then prompt.
