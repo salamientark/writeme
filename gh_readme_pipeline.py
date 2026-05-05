@@ -406,7 +406,6 @@ def main(argv: list[str] | None = None) -> int:
     from src.state import StateStore, xdg_state_dir, prompt_resume
     from src.unpushed import scan_repos as scan_unpushed
     from src.ui import make_ui, SummaryRow
-    import src.tui as tui_mod
 
     ns = parse_args(argv)
     ui = make_ui(plain=ns.plain)
@@ -482,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
                 # "all" → keep all repos including already-processed
 
         # TUI selection
-        selected = tui_mod.tui_select(selected_repos)
+        selected = ui.select_repos(selected_repos)
         if not selected:
             print("Nothing selected.")
             return 0
