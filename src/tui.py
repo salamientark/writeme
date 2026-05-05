@@ -77,6 +77,17 @@ def _main_loop(stdscr, state: SelectionState) -> list[Repo]:
     curses.curs_set(0)
     stdscr.keypad(True)
 
+    # Color pairs (no-ops on terminals without color support)
+    try:
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_CYAN, -1)    # header
+        curses.init_pair(2, curses.COLOR_YELLOW, -1)  # help
+        curses.init_pair(3, curses.COLOR_GREEN, -1)   # HAS README badge
+        curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_CYAN)  # cursor row
+    except curses.error:
+        pass
+
     # Initialise viewport height from actual terminal size
     rows, _cols = stdscr.getmaxyx()
     # Reserve 3 rows: header, help line, and one spare
@@ -130,13 +141,19 @@ def _render(stdscr, state: SelectionState) -> None:
     n_selected = len(state.selected)
     n_total = len(state.repos)
 
+    def _attr(pair: int, extra: int = 0) -> int:
+        try:
+            return curses.color_pair(pair) | extra
+        except curses.error:
+            return extra
+
     # Row 0: header
-    header = f"Select repos for /create-readme  ({n_selected} selected of {n_total})"
-    _safe_addstr(stdscr, 0, 0, header[:cols - 1])
+    header = f"  writeme — select repos  ({n_selected}/{n_total} selected)  "
+    _safe_addstr(stdscr, 0, 0, header[:cols - 1], _attr(1, curses.A_BOLD))
 
     # Row 1: help
     help_line = "↑/↓ move  space toggle  a all  n none  enter confirm  q quit"
-    _safe_addstr(stdscr, 1, 0, help_line[:cols - 1])
+    _safe_addstr(stdscr, 1, 0, help_line[:cols - 1], _attr(2))
 
     # Rows 2+: repo list
     for display_row, visible_row in enumerate(state.visible_slice()):
@@ -145,12 +162,16 @@ def _render(stdscr, state: SelectionState) -> None:
             break
 
         check = "x" if visible_row.is_selected else " "
-        readme_badge = "HAS README" if visible_row.repo.had_readme_before else " " * 10
+        has_readme = visible_row.repo.had_readme_before
+        readme_badge = "HAS README" if has_readme else " " * 10
         line = f"[{check}] [{readme_badge}] {visible_row.repo.name}  {visible_row.repo.pushed_at}"
         line = line[:cols - 1]
 
-        attr = curses.A_REVERSE if visible_row.is_cursor else curses.A_NORMAL
-        _safe_addstr(stdscr, screen_row, 0, line, attr)
+        if visible_row.is_cursor:
+            row_attr = _attr(4, curses.A_BOLD)
+        else:
+            row_attr = _attr(3) if has_readme else curses.A_NORMAL
+        _safe_addstr(stdscr, screen_row, 0, line, row_attr)
 
     stdscr.refresh()
 

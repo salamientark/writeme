@@ -295,6 +295,7 @@ def process_repo(
                 dry_run=dry_run,
                 skip_ci=skip_ci,
                 commit_message=commit_message,
+                ui=ui,
             )
             result_status = commit_result.status
             result_mode = commit_result.mode

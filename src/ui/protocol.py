@@ -41,6 +41,15 @@ class UI(Protocol):
 
     def show_summary(self, rows: list[SummaryRow]) -> None: ...
 
+    def menu(self, title: str, options: list[tuple[str, str]]) -> str:
+        """Show a menu and return the chosen option key.
+
+        *options* is a list of (key, description) tuples. The renderer is free
+        to display any of: keystroke shortcut, arrow-key navigation, both.
+        Returns the key string of the chosen option, or empty string on quit.
+        """
+        ...
+
     def prompt(self, message: str) -> str: ...
 
     def warn(self, message: str) -> None: ...

@@ -1,12 +1,14 @@
 """RichUI — TTY renderer using `rich`.
 
-See docs/UI-REDESIGN.md for surfaces (intro, spinner, review, summary) and
-color palette. Imports `rich` lazily; the factory in __init__ falls back to
-PlainUI when rich is unavailable.
+Interactive surfaces (review, menus) run inside the terminal's alternate
+screen via `Console.screen()`, so they do not pollute scrollback. View toggles
+redraw in place via `ScreenContext.update()`. Non-interactive surfaces (intro,
+summary) print to the normal terminal so the user can re-read them after exit.
+
+See docs/UI-REDESIGN.md.
 """
 from __future__ import annotations
 
-import os
 import sys
 from contextlib import contextmanager
 from typing import Iterator
@@ -34,18 +36,16 @@ _VIEW_LABELS = {
 }
 
 
-def _open_tty():
-    """Return /dev/tty file pair (rd, wr) or (sys.stdin, sys.stderr) fallback."""
+def _open_tty_rd():
+    """Return a raw-bytes file for /dev/tty or None if unavailable."""
     try:
-        rd = open("/dev/tty", "rb", buffering=0)
-        wr = open("/dev/tty", "w")
-        return rd, wr
+        return open("/dev/tty", "rb", buffering=0)
     except OSError:
-        return None, None
+        return None
 
 
 def _read_key(rd) -> str:
-    """Read a single key (with arrow-key escape handling) from rd in cbreak."""
+    """Read a single key (arrow-key escape sequences included) in cbreak mode."""
     import termios
     import tty
     fd = rd.fileno()
@@ -70,7 +70,8 @@ class RichUI:
     # -- intro -------------------------------------------------------------
     def show_intro(self) -> None:
         body = Text()
-        body.append(LOGO + "\n\n", style="cyan")
+        body.append(LOGO, style="bold cyan")
+        body.append("\n")
         body.append(TAGLINE + "\n\n", style="bold")
         body.append(STEPS, style="dim")
         self.console.print(Panel(body, border_style="cyan", padding=(1, 2)))
@@ -100,14 +101,13 @@ class RichUI:
                 theme="ansi_dark",
                 word_wrap=True,
             )
-        # raw
         return Text(ctx.current_draft or "(empty)")
 
-    def _render_panel(self, view: str, ctx: ReviewContext) -> Panel:
+    def _render_review_panel(self, view: str, ctx: ReviewContext) -> Panel:
         title = f"[{ctx.index}/{ctx.total}] {ctx.repo_name}"
         subtitle = (
-            f"view: {_VIEW_LABELS[view]} · tab cycle · 1 diff/HEAD · 2 diff/prev · "
-            "v raw · a accept · r redo · d discard · q quit"
+            f"view: {_VIEW_LABELS[view]}  ·  tab cycle  ·  1 diff/HEAD  "
+            "·  2 diff/prev  ·  v raw  ·  a accept  ·  r redo  ·  d discard  ·  q quit"
         )
         return Panel(
             self._render_view(view, ctx),
@@ -117,10 +117,9 @@ class RichUI:
         )
 
     def show_review(self, ctx: ReviewContext) -> str:
-        rd, _wr = _open_tty()
+        rd = _open_tty_rd()
         if rd is None or not sys.stdout.isatty():
-            # Fallback to a non-interactive print + line input.
-            self.console.print(self._render_panel("README", ctx))
+            self.console.print(self._render_review_panel("README", ctx))
             try:
                 raw = input("[a]ccept / [r]edo / [d]iscard / [q]uit > ").strip().lower()
             except EOFError:
@@ -129,27 +128,80 @@ class RichUI:
 
         view_idx = 0
         try:
-            while True:
-                self.console.clear()
-                self.console.print(self._render_panel(_VIEWS[view_idx], ctx))
-                key = _read_key(rd)
-                if key == "\t":
-                    view_idx = (view_idx + 1) % len(_VIEWS)
-                elif key == "1":
-                    view_idx = _VIEWS.index("diff_head")
-                elif key == "2":
-                    view_idx = _VIEWS.index("diff_prev")
-                elif key == "v":
-                    view_idx = _VIEWS.index("raw")
-                elif key == "a":
-                    return "accept"
-                elif key == "r":
-                    return "redo"
-                elif key == "d":
-                    return "discard"
-                elif key in ("q", "\x03"):  # q or Ctrl-C
-                    return "quit"
-                # ignore other keys
+            with self.console.screen() as screen:
+                while True:
+                    screen.update(self._render_review_panel(_VIEWS[view_idx], ctx))
+                    key = _read_key(rd)
+                    if key == "\t":
+                        view_idx = (view_idx + 1) % len(_VIEWS)
+                    elif key == "1":
+                        view_idx = _VIEWS.index("diff_head")
+                    elif key == "2":
+                        view_idx = _VIEWS.index("diff_prev")
+                    elif key == "v":
+                        view_idx = _VIEWS.index("raw")
+                    elif key == "a":
+                        return "accept"
+                    elif key == "r":
+                        return "redo"
+                    elif key == "d":
+                        return "discard"
+                    elif key in ("q", "\x03"):
+                        return "quit"
+        finally:
+            try:
+                rd.close()
+            except OSError:
+                pass
+
+    # -- menu --------------------------------------------------------------
+    def _render_menu_panel(self, title: str, options: list[tuple[str, str]], cursor: int) -> Panel:
+        body = Text()
+        for i, (key, desc) in enumerate(options):
+            marker = "▸" if i == cursor else " "
+            row_style = "bold cyan" if i == cursor else ""
+            body.append(f" {marker} ", style=row_style)
+            body.append(f"[{key}] ", style="bold yellow" if i == cursor else "yellow")
+            body.append(f"{desc}\n", style=row_style)
+        body.append("\n")
+        body.append("↑/↓ move · enter select · letter shortcut · q quit", style="dim")
+        return Panel(body, title=title, border_style="cyan", padding=(1, 2))
+
+    def menu(self, title: str, options: list[tuple[str, str]]) -> str:
+        if not options:
+            return ""
+        rd = _open_tty_rd()
+        if rd is None or not sys.stdout.isatty():
+            # Fallback: line-based prompt
+            self.console.print(Panel(title, border_style="cyan"))
+            for key, desc in options:
+                self.console.print(f"  [{key}] {desc}")
+            try:
+                raw = input("> ").strip().lower()
+            except EOFError:
+                return ""
+            keys = {k.lower(): k for k, _ in options}
+            return keys.get(raw, "")
+
+        cursor = 0
+        keys = [k for k, _ in options]
+        try:
+            with self.console.screen() as screen:
+                while True:
+                    screen.update(self._render_menu_panel(title, options, cursor))
+                    key = _read_key(rd)
+                    if key in ("\x1b[A",):  # up
+                        cursor = (cursor - 1) % len(options)
+                    elif key in ("\x1b[B",):  # down
+                        cursor = (cursor + 1) % len(options)
+                    elif key in ("\r", "\n"):
+                        return keys[cursor]
+                    elif key in ("q", "\x03"):
+                        return ""
+                    elif key and key.lower() in (k.lower() for k in keys):
+                        for k in keys:
+                            if k.lower() == key.lower():
+                                return k
         finally:
             try:
                 rd.close()

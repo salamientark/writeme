@@ -266,6 +266,7 @@ def commit_and_push(
     dry_run: bool = False,
     skip_ci: bool = False,
     commit_message: str | None = None,
+    ui=None,
 ) -> CommitResult:
     """Commit README.md and optionally push or open a PR.
 
@@ -290,7 +291,21 @@ def commit_and_push(
         )
 
     # Resolve mode
-    resolved_mode = mode if mode is not None else _prompt_mode()
+    if mode is not None:
+        resolved_mode = mode
+    elif ui is not None:
+        choice = ui.menu(
+            "Push mode?",
+            [
+                ("p", "PR (feature branch + gh pr create)"),
+                ("m", "direct to main/default branch"),
+                ("c", "commit only (no push)"),
+                ("n", "no commit (skip)"),
+            ],
+        )
+        resolved_mode = _MODE_CHARS.get(choice, "skip")
+    else:
+        resolved_mode = _prompt_mode()
 
     if resolved_mode == "skip":
         return CommitResult(status="skipped", mode=None, pr_url=None, error=None)

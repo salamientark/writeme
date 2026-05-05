@@ -46,6 +46,19 @@ class PlainUI:
             if raw == "q":
                 return "quit"
 
+    def menu(self, title: str, options: list[tuple[str, str]]) -> str:
+        print(f"\n{title}")
+        for key, desc in options:
+            print(f"  [{key}] {desc}")
+        valid = {k.lower(): k for k, _ in options}
+        while True:
+            try:
+                raw = input("> ").strip().lower()
+            except EOFError:
+                return ""
+            if raw in valid:
+                return valid[raw]
+
     def show_summary(self, rows: list[SummaryRow]) -> None:
         if not rows:
             print("\n(no repos processed)")
