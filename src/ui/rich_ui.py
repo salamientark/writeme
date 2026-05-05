@@ -13,7 +13,7 @@ import sys
 from contextlib import contextmanager
 from typing import Iterator
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -45,7 +45,7 @@ def _open_tty_rd():
 
 
 def _read_key(rd) -> str:
-    """Read a single key (arrow-key escape sequences included) in cbreak mode."""
+    """Read a single key including arrow keys and PgUp/PgDn escape sequences."""
     import termios
     import tty
     fd = rd.fileno()
@@ -55,10 +55,24 @@ def _read_key(rd) -> str:
         ch = rd.read(1)
         if not ch:
             return ""
-        if ch == b"\x1b":
-            seq = rd.read(2)
-            return "\x1b" + seq.decode("ascii", "ignore")
-        return ch.decode("utf-8", "ignore")
+        if ch != b"\x1b":
+            return ch.decode("utf-8", "ignore")
+        # ESC: read up to 5 more bytes for CSI sequences (\x1b[<digits>~ etc.)
+        b1 = rd.read(1)
+        if b1 != b"[":
+            return "\x1b" + b1.decode("ascii", "ignore")
+        seq = b"\x1b["
+        while True:
+            b = rd.read(1)
+            if not b:
+                break
+            seq += b
+            # Terminator: letter (A/B/C/D/H/F) or '~'
+            if b.isalpha() or b == b"~":
+                break
+            if len(seq) > 8:
+                break
+        return seq.decode("ascii", "ignore")
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
@@ -103,23 +117,48 @@ class RichUI:
             )
         return Text(ctx.current_draft or "(empty)")
 
-    def _render_review_panel(self, view: str, ctx: ReviewContext) -> Panel:
+    def _render_to_text_lines(self, renderable, width: int) -> list[Text]:
+        """Render *renderable* to a list of Text lines at the given inner width."""
+        options = self.console.options.update(width=width, height=None)
+        seg_lines = self.console.render_lines(renderable, options, pad=False)
+        out: list[Text] = []
+        for segs in seg_lines:
+            line = Text()
+            for seg in segs:
+                if seg.text:
+                    line.append(seg.text, style=seg.style or "")
+            out.append(line)
+        return out
+
+    def _render_review_panel(
+        self, view: str, ctx: ReviewContext, offset: int, viewport: int
+    ) -> tuple[Panel, int]:
+        """Build the review Panel with a scroll window. Returns (panel, total_lines)."""
+        inner_w = max(20, self.console.size.width - 4)
+        all_lines = self._render_to_text_lines(self._render_view(view, ctx), inner_w)
+        total = len(all_lines)
+        if total == 0:
+            window: list[Text] = [Text("(empty)")]
+        else:
+            offset = max(0, min(offset, max(0, total - viewport)))
+            window = all_lines[offset : offset + viewport]
+        body = Group(*window) if window else Text("")
         title = f"[{ctx.index}/{ctx.total}] {ctx.repo_name}"
+        end = min(offset + len(window), total)
+        scroll_pos = f"lines {offset + 1}-{end}/{total}" if total else "empty"
         subtitle = (
-            f"view: {_VIEW_LABELS[view]}  ·  tab cycle  ·  1 diff/HEAD  "
-            "·  2 diff/prev  ·  v raw  ·  a accept  ·  r redo  ·  d discard  ·  q quit"
+            f"{_VIEW_LABELS[view]}  ·  {scroll_pos}  ·  tab cycle  ·  j/k scroll  "
+            "·  PgUp/PgDn  ·  g/G top/bot  ·  1 diff/HEAD  ·  2 diff/prev  "
+            "·  v raw  ·  a accept  ·  r redo  ·  d discard  ·  q quit"
         )
-        return Panel(
-            self._render_view(view, ctx),
-            title=title,
-            subtitle=subtitle,
-            border_style="cyan",
-        )
+        panel = Panel(body, title=title, subtitle=subtitle, border_style="cyan")
+        return panel, total
 
     def show_review(self, ctx: ReviewContext) -> str:
         rd = _open_tty_rd()
         if rd is None or not sys.stdout.isatty():
-            self.console.print(self._render_review_panel("README", ctx))
+            panel, _ = self._render_review_panel("README", ctx, 0, 10_000)
+            self.console.print(panel)
             try:
                 raw = input("[a]ccept / [r]edo / [d]iscard / [q]uit > ").strip().lower()
             except EOFError:
@@ -127,11 +166,20 @@ class RichUI:
             return {"a": "accept", "r": "redo", "d": "discard", "q": "quit"}.get(raw, "discard")
 
         view_idx = 0
+        # Per-view scroll offsets so switching back preserves position
+        offsets = [0] * len(_VIEWS)
         try:
             with self.console.screen() as screen:
                 while True:
-                    screen.update(self._render_review_panel(_VIEWS[view_idx], ctx))
+                    # Reserve 4 rows for panel borders + title/subtitle padding
+                    viewport = max(3, self.console.size.height - 4)
+                    panel, total = self._render_review_panel(
+                        _VIEWS[view_idx], ctx, offsets[view_idx], viewport
+                    )
+                    screen.update(panel)
                     key = _read_key(rd)
+                    max_off = max(0, total - viewport)
+
                     if key == "\t":
                         view_idx = (view_idx + 1) % len(_VIEWS)
                     elif key == "1":
@@ -140,6 +188,18 @@ class RichUI:
                         view_idx = _VIEWS.index("diff_prev")
                     elif key == "v":
                         view_idx = _VIEWS.index("raw")
+                    elif key in ("j", "\x1b[B"):  # down
+                        offsets[view_idx] = min(max_off, offsets[view_idx] + 1)
+                    elif key in ("k", "\x1b[A"):  # up
+                        offsets[view_idx] = max(0, offsets[view_idx] - 1)
+                    elif key in ("\x1b[6", "\x1b[6~", " "):  # PgDn / space
+                        offsets[view_idx] = min(max_off, offsets[view_idx] + viewport)
+                    elif key in ("\x1b[5", "\x1b[5~", "b"):  # PgUp / b
+                        offsets[view_idx] = max(0, offsets[view_idx] - viewport)
+                    elif key == "g":
+                        offsets[view_idx] = 0
+                    elif key == "G":
+                        offsets[view_idx] = max_off
                     elif key == "a":
                         return "accept"
                     elif key == "r":
