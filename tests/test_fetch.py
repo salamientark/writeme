@@ -27,6 +27,7 @@ def _make_node(
     readme_cap: object = None,
     readme_rst: object = None,
     readme_docs: object = None,
+    is_fork: bool = False,
 ) -> dict:
     """Return a single node dict as returned by the GraphQL repository edge."""
     return {
@@ -34,6 +35,7 @@ def _make_node(
         "sshUrl": ssh_url,
         "pushedAt": pushed_at,
         "diskUsage": disk_usage,
+        "isFork": is_fork,
         "readmeMd": readme_md,
         "readmeLc": readme_lc,
         "readmeCap": readme_cap,
@@ -137,6 +139,24 @@ class TestFetchSinglePage(unittest.TestCase):
         ]
         repos = self._run_fetch(nodes)
         self.assertEqual(len(repos), 2)
+
+    def test_is_fork_field_parsed(self):
+        nodes = [
+            _make_node(name="forky", is_fork=True),
+            _make_node(name="origi", is_fork=False),
+        ]
+        repos = self._run_fetch(nodes)
+        by_name = {r.name: r for r in repos}
+        self.assertTrue(by_name["forky"].is_fork)
+        self.assertFalse(by_name["origi"].is_fork)
+
+    def test_is_fork_defaults_false_when_field_missing(self):
+        # Defensive: GraphQL should always return isFork, but if absent we
+        # should default to False rather than crash.
+        node = _make_node(name="legacy")
+        del node["isFork"]
+        repos = self._run_fetch([node])
+        self.assertFalse(repos[0].is_fork)
 
     def test_result_sorted_by_pushed_at_desc(self):
         nodes = [

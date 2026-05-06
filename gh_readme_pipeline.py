@@ -467,6 +467,18 @@ def main(argv: list[str] | None = None) -> int:
             ui.error(f"failed to fetch repositories: {e}")
             return 1
 
+        # F4: parallel REST contributor enrichment for solo-only filter.
+        try:
+            from src.contributors import enrich_repos
+            ns.repos_dir.mkdir(parents=True, exist_ok=True)
+            cache_path = ns.repos_dir / ".contributors.json"
+            with ui.spinner("Fetching contributor data…"):
+                repos = enrich_repos(
+                    repos, owner=user, cache_path=cache_path, max_workers=10
+                )
+        except Exception as e:
+            ui.warn(f"contributor enrichment failed: {e} (solo filter unavailable)")
+
         # Resume handling
         selected_repos = list(repos)
         if ns.resume and state_store.has_prior_state():

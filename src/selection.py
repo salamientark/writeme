@@ -27,6 +27,8 @@ class Repo:
     pushed_at: str
     had_readme_before: bool
     disk_usage: int
+    is_fork: bool = False
+    contributors: tuple[str, ...] | None = None
 
 
 class VisibleRow(NamedTuple):
@@ -57,6 +59,9 @@ class SelectionState:
     viewport_start: int
     viewport_height: int
     filter: str = ""
+    solo_only: bool = False
+    exclude_forks: bool = False
+    exclude_existing_readme: bool = False
 
     # ------------------------------------------------------------------
     # Core mutation helpers (return new instances)
@@ -162,13 +167,52 @@ class SelectionState:
     def page_up(self) -> "SelectionState":
         return self.move(-self.viewport_height)
 
+    def toggle_solo_only(self) -> "SelectionState":
+        return self._reapply_filters(replace(self, solo_only=not self.solo_only))
+
+    def toggle_exclude_forks(self) -> "SelectionState":
+        return self._reapply_filters(replace(self, exclude_forks=not self.exclude_forks))
+
+    def toggle_exclude_existing_readme(self) -> "SelectionState":
+        return self._reapply_filters(
+            replace(self, exclude_existing_readme=not self.exclude_existing_readme)
+        )
+
+    def _reapply_filters(self, new: "SelectionState") -> "SelectionState":
+        """Clamp cursor + viewport after a filter-state change (F8 cursor-keep)."""
+        visible = new.visible_indices
+        if not visible:
+            return replace(new, viewport_start=0)
+        cursor = self.cursor if self.cursor in visible else visible[0]
+        cur_vp = visible.index(cursor)
+        vp_start = 0
+        if cur_vp >= new.viewport_height:
+            vp_start = cur_vp - new.viewport_height + 1
+        vp_start = max(
+            0, min(max(0, len(visible) - new.viewport_height), vp_start)
+        )
+        return replace(new, cursor=cursor, viewport_start=vp_start)
+
     @property
     def visible_indices(self) -> tuple[int, ...]:
-        """Indices into self.repos matching current filter (case-insensitive)."""
-        if not self.filter:
-            return tuple(range(len(self.repos)))
-        q = self.filter.lower()
-        return tuple(i for i, r in enumerate(self.repos) if q in r.name.lower())
+        """Indices into self.repos matching current filter (case-insensitive)
+        composed with predicate-toggle filters (F7)."""
+        # Local import avoids cycle (filters imports Repo from this module).
+        from src.filters import has_readme, is_fork, is_solo
+
+        q = self.filter.lower() if self.filter else ""
+        result: list[int] = []
+        for i, r in enumerate(self.repos):
+            if q and q not in r.name.lower():
+                continue
+            if self.solo_only and not is_solo(r):
+                continue
+            if self.exclude_forks and is_fork(r):
+                continue
+            if self.exclude_existing_readme and has_readme(r):
+                continue
+            result.append(i)
+        return tuple(result)
 
     @property
     def hidden_selected_count(self) -> int:
@@ -228,4 +272,10 @@ class SelectionState:
             return self.select_all()
         if c == ord("n"):
             return self.select_none()
+        if c == ord("s"):
+            return self.toggle_solo_only()
+        if c == ord("F"):
+            return self.toggle_exclude_forks()
+        if c == ord("r"):
+            return self.toggle_exclude_existing_readme()
         return self
