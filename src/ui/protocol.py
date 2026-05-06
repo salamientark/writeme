@@ -69,3 +69,13 @@ class UI(Protocol):
     def warn(self, message: str) -> None: ...
 
     def error(self, message: str) -> None: ...
+
+    def status_line(
+        self, done: int, total: int, running: int, queued: int
+    ) -> None:
+        """Render the parallel-pipeline status line above the review prompt.
+
+        Format: ``[done/total] running=R queued=Q``. Renderers may use Rich
+        Live or fall back to plain stdout.
+        """
+        ...

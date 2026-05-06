@@ -1,7 +1,7 @@
 # gh-readme-pipeline — Implementation Plan
 
 **Date:** 2026-04-29
-**Spec:** `2026-04-29-gh-readme-pipeline-design-v2.md`
+**Spec:** `docs/specs/features/gh-readme-pipeline.md`
 **Approach:** TDD per phase. Each phase = tests first (RED), then implementation (GREEN), then refactor.
 
 ---

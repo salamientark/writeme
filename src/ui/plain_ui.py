@@ -108,3 +108,8 @@ class PlainUI:
 
     def error(self, message: str) -> None:
         print(f"error: {message}", file=sys.stderr)
+
+    def status_line(
+        self, done: int, total: int, running: int, queued: int
+    ) -> None:
+        print(f"[{done}/{total}] running={running} queued={queued}")

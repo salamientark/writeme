@@ -70,5 +70,23 @@ class TestPlainUISelect(unittest.TestCase):
         self.assertIn("HAS README", stdout)
 
 
+class TestPlainUIStatusLine(unittest.TestCase):
+    def test_status_line_prints(self):
+        from src.ui.plain_ui import PlainUI
+        from io import StringIO
+        import sys
+        ui = PlainUI()
+        buf = StringIO()
+        old = sys.stdout
+        sys.stdout = buf
+        try:
+            ui.status_line(2, 5, 1, 2)
+        finally:
+            sys.stdout = old
+        self.assertIn("[2/5]", buf.getvalue())
+        self.assertIn("running=1", buf.getvalue())
+        self.assertIn("queued=2", buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

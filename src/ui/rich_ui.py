@@ -159,6 +159,12 @@ class RichUI:
                         state = state.move(1)
                     elif k == "k":
                         state = state.move(-1)
+                    elif k == "s":
+                        state = state.toggle_solo_only()
+                    elif k == "F":
+                        state = state.toggle_exclude_forks()
+                    elif k == "r":
+                        state = state.toggle_exclude_existing_readme()
         except KeyboardInterrupt:
             return []
         finally:
@@ -207,9 +213,18 @@ class RichUI:
                 style="cyan",
             )
         else:
+            toggles = []
+            if state.solo_only:
+                toggles.append("solo")
+            if state.exclude_forks:
+                toggles.append("no-forks")
+            if state.exclude_existing_readme:
+                toggles.append("no-readme")
+            tog_str = f"  [{' · '.join(toggles)}]" if toggles else ""
             footer = Text(
-                "↑/↓ move · space toggle · / filter · enter confirm · "
-                f"a all · n none · g/G top/bottom · q quit    {n_selected}/{n_total} selected",
+                "↑/↓ move · space toggle · / filter · s solo · F forks · r readme · "
+                f"enter confirm · a all · n none · q quit    "
+                f"{n_selected}/{n_total} selected{tog_str}",
                 style="cyan",
             )
 
@@ -467,3 +482,10 @@ class RichUI:
 
     def error(self, message: str) -> None:
         self.console.print(f"[bold red]error:[/bold red] {message}")
+
+    def status_line(
+        self, done: int, total: int, running: int, queued: int
+    ) -> None:
+        self.console.print(
+            f"[dim][{done}/{total}] running={running} queued={queued}[/dim]"
+        )

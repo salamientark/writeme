@@ -96,7 +96,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          NOTES="docs/RELEASE-NOTES-${VERSION}.md"
+          NOTES="docs/releases/${VERSION}.md"
           if [[ -f "$NOTES" ]]; then
             gh release create "${VERSION}" \
               --title "${VERSION}" \

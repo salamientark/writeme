@@ -45,6 +45,8 @@ from pathlib import Path
 
 HARD_LIMIT = 1000
 DEFAULT_TIMEOUT = 300
+DEFAULT_PARALLEL = 3
+PARALLEL_CAP = 8
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +108,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Append [skip ci] to commit message.",
     )
     parser.add_argument(
+        "--parallel",
+        type=int,
+        default=None,
+        help=(
+            f"Number of parallel claude workers (default {DEFAULT_PARALLEL}, "
+            f"hard cap {PARALLEL_CAP}). 1 = sequential."
+        ),
+    )
+    parser.add_argument(
         "--plain",
         action="store_true",
         default=False,
@@ -135,6 +146,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     if not ns.skip_ci:
         ns.skip_ci = bool(os.environ.get("SKIP_CI", ""))
+
+    if ns.parallel is None:
+        env_parallel = os.environ.get("WRITEME_PARALLEL")
+        if env_parallel:
+            try:
+                ns.parallel = int(env_parallel)
+            except ValueError:
+                ns.parallel = DEFAULT_PARALLEL
+        else:
+            ns.parallel = DEFAULT_PARALLEL
+    ns.parallel = max(1, min(ns.parallel, PARALLEL_CAP))
 
     return ns
 
@@ -241,6 +263,7 @@ def process_repo(
     ui=None,
     repo_index: int = 1,
     repo_total: int = 1,
+    pregenerated=None,
 ) -> str | None:
     """Run the full pipeline for one repository.
 
@@ -260,7 +283,11 @@ def process_repo(
     """
     from src import safety, review, commit
 
-    repo_dir = _clone_or_fetch(repo, repos_dir)
+    if pregenerated is None:
+        repo_dir = _clone_or_fetch(repo, repos_dir)
+    else:
+        # Worker already cloned; reuse path.
+        repo_dir = repos_dir / repo.name
 
     result_status = "failed"
     result_mode: str | None = None
@@ -285,6 +312,7 @@ def process_repo(
             repo_index=repo_index,
             repo_total=repo_total,
             repo_name=repo.name,
+            pregenerated=pregenerated,
         )
 
         if review_result.status == "accepted":
@@ -330,6 +358,88 @@ def process_repo(
                 pr_url=result_pr_url,
             )
 
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Parallel orchestration
+# ---------------------------------------------------------------------------
+
+
+def _run_parallel(*, selected, ns, state_store, commit_message, ui) -> str | None:
+    """Submit clone+claude jobs to a WorkerPool, then review results sequentially.
+
+    Returns 'quit' when user aborts review, else None.
+    """
+    from src import review as review_mod
+    from src.worker import WorkerPool
+    from src.sandbox import sandbox_for, sandbox_env
+
+    repo_index_map = {r.name: i for i, r in enumerate(selected, start=1)}
+    repo_lookup = {r.name: r for r in selected}
+    total = len(selected)
+    sandbox_root = ns.repos_dir / ".sandbox"
+
+    def generate(repo):
+        repo_dir = _clone_or_fetch(repo, ns.repos_dir)
+        # P7: per-job XDG sandbox dir avoids claude session DB races.
+        # Pass env through to the subprocess instead of mutating os.environ
+        # (process-global, unsafe under threaded parallelism).
+        try:
+            paths = sandbox_for(sandbox_root, repo.name)
+            sb_env = sandbox_env(paths)
+            gen = review_mod.generate_draft(
+                repo_dir,
+                ns.claude_timeout,
+                ui=None,
+                repo_name=repo.name,
+                env=sb_env,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return (repo, None, repo_dir, str(exc))
+        return (repo, gen, repo_dir, None)
+
+    pool = WorkerPool(max_workers=ns.parallel, generate_fn=generate)
+    pool.submit_all(selected)
+
+    done = 0
+    try:
+        for item in pool.completed():
+            done += 1
+            queued = max(0, total - done - ns.parallel)
+            running = min(ns.parallel, total - done)
+            ui.status_line(done, total, running, queued)
+            if isinstance(item, tuple) and len(item) >= 2 and item[0] == "failed":
+                ui.warn(f"{item[1]}: worker failure ({item[2]})")
+                state_store.record(str(item[1]), "failed", error=str(item[2]))
+                continue
+            if not isinstance(item, tuple) or len(item) != 4:
+                continue
+            repo, gen, _repo_dir, err = item
+            if err is not None or gen is None:
+                ui.warn(f"{repo.name}: generation failed ({err})")
+                state_store.record(repo.name, "failed", error=err)
+                continue
+            idx = repo_index_map.get(repo.name, 1)
+            sentinel = process_repo(
+                repo=repo,
+                repos_dir=ns.repos_dir,
+                mode=ns.mode,
+                dry_run=ns.dry_run,
+                skip_ci=ns.skip_ci,
+                commit_message=commit_message,
+                claude_timeout=ns.claude_timeout,
+                state_store=state_store,
+                ui=ui,
+                repo_index=idx,
+                repo_total=total,
+                pregenerated=gen,
+            )
+            if sentinel == "quit":
+                pool.drain()
+                return "quit"
+    finally:
+        pool.drain()
     return None
 
 
@@ -467,6 +577,18 @@ def main(argv: list[str] | None = None) -> int:
             ui.error(f"failed to fetch repositories: {e}")
             return 1
 
+        # F4: parallel REST contributor enrichment for solo-only filter.
+        try:
+            from src.contributors import enrich_repos
+            ns.repos_dir.mkdir(parents=True, exist_ok=True)
+            cache_path = ns.repos_dir / ".contributors.json"
+            with ui.spinner("Fetching contributor data…"):
+                repos = enrich_repos(
+                    repos, owner=user, cache_path=cache_path, max_workers=10
+                )
+        except Exception as e:
+            ui.warn(f"contributor enrichment failed: {e} (solo filter unavailable)")
+
         # Resume handling
         selected_repos = list(repos)
         if ns.resume and state_store.has_prior_state():
@@ -489,23 +611,34 @@ def main(argv: list[str] | None = None) -> int:
 
         # Process each selected repo
         total = len(selected)
-        for idx, repo in enumerate(selected, start=1):
-            sentinel = process_repo(
-                repo=repo,
-                repos_dir=ns.repos_dir,
-                mode=ns.mode,
-                dry_run=ns.dry_run,
-                skip_ci=ns.skip_ci,
-                commit_message=commit_message,
-                claude_timeout=ns.claude_timeout,
+        if ns.parallel > 1:
+            sentinel = _run_parallel(
+                selected=selected,
+                ns=ns,
                 state_store=state_store,
+                commit_message=commit_message,
                 ui=ui,
-                repo_index=idx,
-                repo_total=total,
             )
             if sentinel == "quit":
                 ui.warn("User quit. Stopping.")
-                break
+        else:
+            for idx, repo in enumerate(selected, start=1):
+                sentinel = process_repo(
+                    repo=repo,
+                    repos_dir=ns.repos_dir,
+                    mode=ns.mode,
+                    dry_run=ns.dry_run,
+                    skip_ci=ns.skip_ci,
+                    commit_message=commit_message,
+                    claude_timeout=ns.claude_timeout,
+                    state_store=state_store,
+                    ui=ui,
+                    repo_index=idx,
+                    repo_total=total,
+                )
+                if sentinel == "quit":
+                    ui.warn("User quit. Stopping.")
+                    break
 
         # End-of-run summary (Rich table when UI present, plain otherwise)
         ui.show_summary(_summary_rows(state_store))

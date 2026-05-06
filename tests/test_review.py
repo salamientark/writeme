@@ -864,3 +864,68 @@ class TestClaudeEnvScrub(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Pregenerated path — Phase 2
+# ---------------------------------------------------------------------------
+
+class TestReviewLoopPregenerated(unittest.TestCase):
+    """review_loop accepts a GenerationResult and skips inline claude run."""
+
+    def test_pregenerated_accept_path(self):
+        from src.review import GenerationResult
+        gen = GenerationResult(
+            status="ready",
+            old_content="",
+            new_content="# Hi\n",
+            risky_files=(),
+            secret_matches=(),
+        )
+        with patch("builtins.input", return_value="a"), \
+             patch("src.review._tty_input", return_value="a"), \
+             patch("src.review._show_pager"):
+            result = review_loop(
+                Path("/repo"),
+                had_readme_before=False,
+                pregenerated=gen,
+            )
+        self.assertEqual(result.status, "accepted")
+
+    def test_pregenerated_blast_radius_is_failed(self):
+        from src.review import GenerationResult
+        gen = GenerationResult(
+            status="blast_radius",
+            old_content="",
+            new_content=None,
+            risky_files=(),
+            secret_matches=(),
+            error="claude_touched_other_files",
+        )
+        with patch("src.review.safety.ensure_clean"):
+            result = review_loop(
+                Path("/repo"),
+                had_readme_before=False,
+                pregenerated=gen,
+            )
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.reason, "claude_touched_other_files")
+
+    def test_pregenerated_secret_blocks_unless_override(self):
+        from src.review import GenerationResult
+        gen = GenerationResult(
+            status="ready",
+            old_content="",
+            new_content="AKIA...",
+            risky_files=(),
+            secret_matches=("AKIA...",),
+        )
+        with patch("src.review._tty_input", return_value="no"), \
+             patch("src.review.safety.ensure_clean"):
+            result = review_loop(
+                Path("/repo"),
+                had_readme_before=False,
+                pregenerated=gen,
+            )
+        self.assertEqual(result.status, "skipped")
+        self.assertEqual(result.reason, "secrets_detected")

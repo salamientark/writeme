@@ -14,6 +14,7 @@ Public API:
 import json
 import os
 import re
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -77,6 +78,9 @@ class StateStore:
         self._user = user
         self._state_dir = state_dir if state_dir is not None else xdg_state_dir()
         self._state_file = self._state_dir / f"state-{user}.jsonl"
+        # P8: serialise writes within a process; parallel WorkerPool threads
+        # call record() concurrently.
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Write
@@ -112,9 +116,10 @@ class StateStore:
             entry["pr_url"] = pr_url
 
         self._state_dir.mkdir(parents=True, exist_ok=True)
-        with self._state_file.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry) + "\n")
-            fh.flush()
+        with self._lock:
+            with self._state_file.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry) + "\n")
+                fh.flush()
 
     # ------------------------------------------------------------------
     # Read

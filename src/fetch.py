@@ -49,6 +49,7 @@ query FetchRepos($login: String!, $first: Int!, $after: String) {
         sshUrl
         pushedAt
         diskUsage
+        isFork
         readmeMd: object(expression: "HEAD:README.md") { ... on Blob { text } }
         readmeLc: object(expression: "HEAD:readme.md") { ... on Blob { text } }
         readmeCap: object(expression: "HEAD:Readme.md") { ... on Blob { text } }
@@ -118,6 +119,7 @@ def _parse_node(node: dict) -> Repo:
 
     pushed_at = node.get("pushedAt", "")
     disk_usage = node.get("diskUsage", 0) or 0
+    is_fork = bool(node.get("isFork", False))
 
     # Multi-expression README detection: any non-null value → had_readme_before
     had_readme_before = any(
@@ -131,6 +133,7 @@ def _parse_node(node: dict) -> Repo:
         pushed_at=pushed_at,
         had_readme_before=had_readme_before,
         disk_usage=disk_usage,
+        is_fork=is_fork,
     )
 
 

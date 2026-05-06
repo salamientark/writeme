@@ -17,7 +17,7 @@ Two paths:
 - [ ] `git status` clean on `main`, branch up to date with `origin/main`.
 - [ ] README install URL references the upcoming tag.
 - [ ] `CHANGELOG.md` (if maintained) updated.
-- [ ] Optional: write `docs/RELEASE-NOTES-vX.Y.Z.md`. If absent, GitHub auto-generates notes.
+- [ ] Optional: write `docs/releases/vX.Y.Z.md`. If absent, GitHub auto-generates notes.
 
 ### 2. Tag and push
 
@@ -37,7 +37,7 @@ Triggered by `push` of any `v*` tag. Steps:
 2. Resolve tag → commit SHA via `git rev-parse "${VERSION}^{commit}"`.
 3. Pin `EXPECTED_SHA` in `install.sh` to that commit SHA.
 4. Create `release/${VERSION}` branch with the pinned commit, push to origin.
-5. `gh release create` — uses `docs/RELEASE-NOTES-${VERSION}.md` if present, else `--generate-notes`. Attaches `install.sh` and `gh_readme_pipeline.py`.
+5. `gh release create` — uses `docs/releases/${VERSION}.md` if present, else `--generate-notes`. Attaches `install.sh` and `gh_readme_pipeline.py`.
 6. Fast-forward `latest` branch to the pinned commit.
 
 ### 4. Watch the run
@@ -133,8 +133,8 @@ git push origin "$VERSION"
 git push origin release/$VERSION
 
 NOTES_ARG="--generate-notes"
-if [ -f "docs/RELEASE-NOTES-$VERSION.md" ]; then
-  NOTES_ARG="--notes-file docs/RELEASE-NOTES-$VERSION.md"
+if [ -f "docs/releases/$VERSION.md" ]; then
+  NOTES_ARG="--notes-file docs/releases/$VERSION.md"
 fi
 
 gh release create "$VERSION" \
