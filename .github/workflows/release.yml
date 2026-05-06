@@ -29,6 +29,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
       - name: Configure git identity for tests
         run: |
           git config --global user.email "ci@example.com"

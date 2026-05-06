@@ -405,5 +405,149 @@ class TestImmutabilityInvariant(unittest.TestCase):
         self.assertEqual(s.selected, original_selected)
 
 
+class TestFilterAndJump(unittest.TestCase):
+    """Stage 2 extensions: filter, jump, page, hidden_selected_count."""
+
+    def _named_repos(self, names: list[str]) -> tuple:
+        return tuple(
+            Repo(
+                name=n,
+                ssh_url=f"git@github.com:user/{n}.git",
+                pushed_at="2026-01-01",
+                had_readme_before=False,
+                disk_usage=1,
+            )
+            for n in names
+        )
+
+    def _state(self, names: list[str], **kw) -> SelectionState:
+        return SelectionState(
+            repos=self._named_repos(names),
+            cursor=kw.get("cursor", 0),
+            selected=frozenset(kw.get("selected", [])),
+            viewport_start=kw.get("vp", 0),
+            viewport_height=kw.get("h", 5),
+            filter=kw.get("filter", ""),
+        )
+
+    def test_filter_field_default_empty(self) -> None:
+        s = self._state(["a", "b"])
+        self.assertEqual(s.filter, "")
+
+    def test_apply_filter_returns_new_state(self) -> None:
+        s = self._state(["alpha", "beta", "gamma"])
+        s2 = s.apply_filter("be")
+        self.assertEqual(s2.filter, "be")
+        self.assertEqual(s.filter, "")
+
+    def test_visible_indices_no_filter(self) -> None:
+        s = self._state(["a", "b", "c"])
+        self.assertEqual(s.visible_indices, (0, 1, 2))
+
+    def test_visible_indices_substring_match(self) -> None:
+        s = self._state(["alpha", "beta", "alphabet"]).apply_filter("alpha")
+        self.assertEqual(s.visible_indices, (0, 2))
+
+    def test_filter_case_insensitive(self) -> None:
+        s = self._state(["Alpha", "Beta"]).apply_filter("ALP")
+        self.assertEqual(s.visible_indices, (0,))
+
+    def test_filter_preserves_selected(self) -> None:
+        s = self._state(["alpha", "beta", "gamma"], selected=[0, 2])
+        s2 = s.apply_filter("alpha")
+        self.assertEqual(s2.selected, frozenset({0, 2}))
+
+    def test_clear_filter(self) -> None:
+        s = self._state(["a", "b"]).apply_filter("a")
+        s2 = s.clear_filter()
+        self.assertEqual(s2.filter, "")
+
+    def test_cursor_clamps_to_visible_after_filter(self) -> None:
+        s = self._state(["alpha", "beta", "gamma"], cursor=2).apply_filter("alpha")
+        self.assertIn(s.cursor, s.visible_indices)
+
+    def test_apply_filter_scrolls_viewport_to_keep_cursor_visible(self) -> None:
+        # 20 repos all matching filter, viewport_height=5, cursor at end.
+        names = [f"r{i:02d}" for i in range(20)]
+        s = self._state(names, cursor=18, h=5).apply_filter("r")
+        cur_vp = s.visible_indices.index(s.cursor)
+        self.assertGreaterEqual(cur_vp, s.viewport_start)
+        self.assertLess(cur_vp, s.viewport_start + s.viewport_height)
+
+    def test_hidden_selected_count(self) -> None:
+        s = self._state(
+            ["alpha", "beta", "gamma"], selected=[0, 1, 2]
+        ).apply_filter("alpha")
+        self.assertEqual(s.hidden_selected_count, 2)
+
+    def test_hidden_selected_count_zero_when_no_filter(self) -> None:
+        s = self._state(["a", "b"], selected=[0, 1])
+        self.assertEqual(s.hidden_selected_count, 0)
+
+    def test_jump_top(self) -> None:
+        s = self._state(["a", "b", "c"], cursor=2, vp=1)
+        s2 = s.jump_top()
+        self.assertEqual(s2.cursor, 0)
+        self.assertEqual(s2.viewport_start, 0)
+
+    def test_jump_bottom(self) -> None:
+        s = self._state(["a", "b", "c", "d", "e", "f"], h=3)
+        s2 = s.jump_bottom()
+        self.assertEqual(s2.cursor, 5)
+
+    def test_jump_bottom_with_filter(self) -> None:
+        s = self._state(["alpha", "beta", "alphabet"]).apply_filter("alpha")
+        s2 = s.jump_bottom()
+        self.assertEqual(s2.cursor, 2)
+
+    def test_page_down(self) -> None:
+        s = self._state([f"r{i}" for i in range(20)], h=5)
+        s2 = s.page_down()
+        self.assertEqual(s2.cursor, 5)
+
+    def test_page_up_at_top(self) -> None:
+        s = self._state([f"r{i}" for i in range(20)], h=5, cursor=0)
+        s2 = s.page_up()
+        self.assertEqual(s2.cursor, 0)
+
+    def test_page_down_at_bottom(self) -> None:
+        s = self._state([f"r{i}" for i in range(5)], h=5, cursor=4)
+        s2 = s.page_down()
+        self.assertEqual(s2.cursor, 4)
+
+    def test_select_all_operates_on_visible_only(self) -> None:
+        s = self._state(["alpha", "beta", "alphabet"]).apply_filter("alpha")
+        s2 = s.select_all()
+        self.assertEqual(s2.selected, frozenset({0, 2}))
+
+    def test_select_none_clears_only_visible(self) -> None:
+        s = self._state(
+            ["alpha", "beta", "alphabet"], selected=[0, 1, 2]
+        ).apply_filter("alpha")
+        s2 = s.select_none()
+        self.assertEqual(s2.selected, frozenset({1}))
+
+    # Regression: cursor must stay in visible_indices when a filter is active.
+    def test_move_down_stays_in_visible_after_filter(self) -> None:
+        s = self._state(["alpha", "beta", "alphabet"]).apply_filter("alpha")
+        s2 = s.move(1)
+        self.assertIn(s2.cursor, s2.visible_indices)
+
+    def test_move_up_stays_in_visible_after_filter(self) -> None:
+        s = self._state(["alpha", "beta", "alphabet"]).apply_filter("alpha")
+        s2 = s.move(1).move(-1)
+        self.assertIn(s2.cursor, s2.visible_indices)
+
+    def test_page_down_stays_in_visible_after_filter(self) -> None:
+        s = self._state(["alpha", "beta", "alphabet"]).apply_filter("alpha")
+        s2 = s.page_down()
+        self.assertIn(s2.cursor, s2.visible_indices)
+
+    def test_page_up_stays_in_visible_after_filter(self) -> None:
+        s = self._state(["alpha", "beta", "alphabet"]).apply_filter("alpha")
+        s2 = s.page_down().page_up()
+        self.assertIn(s2.cursor, s2.visible_indices)
+
+
 if __name__ == "__main__":
     unittest.main()

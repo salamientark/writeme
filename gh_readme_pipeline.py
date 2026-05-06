@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = []
+# dependencies = ["rich>=13.7.0"]
 # ///
 """gh-readme-pipeline — interactive CLI to generate README files via Claude.
 
@@ -104,6 +104,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Append [skip ci] to commit message.",
+    )
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        default=False,
+        help="Disable Rich UI (force plain prints — useful for non-TTY/CI).",
     )
 
     ns = parser.parse_args(argv)
@@ -232,6 +238,9 @@ def process_repo(
     commit_message: str | None,
     claude_timeout: int,
     state_store,
+    ui=None,
+    repo_index: int = 1,
+    repo_total: int = 1,
 ) -> str | None:
     """Run the full pipeline for one repository.
 
@@ -272,6 +281,10 @@ def process_repo(
             repo_dir=repo_dir,
             had_readme_before=repo.had_readme_before,
             claude_timeout=claude_timeout,
+            ui=ui,
+            repo_index=repo_index,
+            repo_total=repo_total,
+            repo_name=repo.name,
         )
 
         if review_result.status == "accepted":
@@ -282,6 +295,7 @@ def process_repo(
                 dry_run=dry_run,
                 skip_ci=skip_ci,
                 commit_message=commit_message,
+                ui=ui,
             )
             result_status = commit_result.status
             result_mode = commit_result.mode
@@ -322,6 +336,29 @@ def process_repo(
 # ---------------------------------------------------------------------------
 # Summary printer
 # ---------------------------------------------------------------------------
+
+
+def _summary_rows(state_store) -> list:
+    """Build a list of SummaryRow from the state store (last record per repo wins)."""
+    from src.ui import SummaryRow
+    records = state_store._read_all()
+    last: dict[str, dict] = {}
+    for rec in records:
+        name = rec.get("repo")
+        if name:
+            last[name] = rec
+    status_map = {
+        "pushed": "accepted",
+        "pr_opened": "accepted",
+        "commit_only": "accepted",
+        "skipped": "skipped",
+        "failed": "failed",
+    }
+    rows = []
+    for name, rec in last.items():
+        outcome = status_map.get(rec.get("status", ""), "skipped")
+        rows.append(SummaryRow(repo=name, outcome=outcome, pr_url=rec.get("pr_url")))
+    return rows
 
 
 def _print_summary(state_store) -> None:
@@ -368,9 +405,11 @@ def main(argv: list[str] | None = None) -> int:
     from src.fetch import fetch_repos
     from src.state import StateStore, xdg_state_dir, prompt_resume
     from src.unpushed import scan_repos as scan_unpushed
-    import src.tui as tui_mod
+    from src.ui import make_ui, SummaryRow
 
     ns = parse_args(argv)
+    ui = make_ui(plain=ns.plain)
+    ui.clear()
 
     # --clean: remove repos dir and exit
     if ns.clean:
@@ -419,11 +458,13 @@ def main(argv: list[str] | None = None) -> int:
         # GPG signing warning
         commit_mod.warn_gpg_signing()
 
-        # Fetch repositories — CR-HIGH-3: surface as readable error, not traceback.
+        # Intro banner + fetch spinner
+        ui.show_intro()
         try:
-            repos = fetch_repos(user, limit)
+            with ui.spinner("Fetching your repos from GitHub…"):
+                repos = fetch_repos(user, limit)
         except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
-            print(f"ERROR: failed to fetch repositories: {e}", file=sys.stderr)
+            ui.error(f"failed to fetch repositories: {e}")
             return 1
 
         # Resume handling
@@ -441,13 +482,14 @@ def main(argv: list[str] | None = None) -> int:
                 # "all" → keep all repos including already-processed
 
         # TUI selection
-        selected = tui_mod.tui_select(selected_repos)
+        selected = ui.select_repos(selected_repos)
         if not selected:
             print("Nothing selected.")
             return 0
 
         # Process each selected repo
-        for repo in selected:
+        total = len(selected)
+        for idx, repo in enumerate(selected, start=1):
             sentinel = process_repo(
                 repo=repo,
                 repos_dir=ns.repos_dir,
@@ -457,13 +499,16 @@ def main(argv: list[str] | None = None) -> int:
                 commit_message=commit_message,
                 claude_timeout=ns.claude_timeout,
                 state_store=state_store,
+                ui=ui,
+                repo_index=idx,
+                repo_total=total,
             )
             if sentinel == "quit":
-                print("User quit. Stopping.")
+                ui.warn("User quit. Stopping.")
                 break
 
-        # End-of-run summary
-        _print_summary(state_store)
+        # End-of-run summary (Rich table when UI present, plain otherwise)
+        ui.show_summary(_summary_rows(state_store))
 
         # Unpushed-work scan: exit 2 if any clone is dirty or has unpushed commits
         findings = scan_unpushed(ns.repos_dir)

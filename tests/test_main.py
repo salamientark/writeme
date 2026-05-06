@@ -58,6 +58,11 @@ class TestArgParsing(unittest.TestCase):
         self.assertFalse(ns.resume)
         self.assertFalse(ns.clean)
         self.assertFalse(ns.skip_ci)
+        self.assertFalse(ns.plain)
+
+    def test_plain_flag(self):
+        ns = self._parse(["--plain"])
+        self.assertTrue(ns.plain)
 
     def test_mode_pr(self):
         ns = self._parse(["--mode", "pr"])
@@ -180,7 +185,7 @@ class TestUserMismatch(unittest.TestCase):
             with patch.dict(os.environ, env_patch, clear=False), \
                  patch("subprocess.run", return_value=mock_proc) as mock_run, \
                  patch("src.fetch.fetch_repos", return_value=[]) as mock_fetch, \
-                 patch("src.tui.tui_select", return_value=[]) as mock_tui, \
+                 patch("src.ui.plain_ui.PlainUI.select_repos", return_value=[]) as mock_tui, \
                  patch("src.commit.warn_gpg_signing"), \
                  patch("src.safety.acquire_lock") as mock_lock, \
                  patch("builtins.input", return_value=confirm_input), \
@@ -220,7 +225,7 @@ class TestUserMismatch(unittest.TestCase):
             with patch.dict(os.environ, {"GH_USER": "alice"}, clear=False), \
                  patch("subprocess.run", return_value=mock_proc), \
                  patch("src.fetch.fetch_repos", return_value=[]), \
-                 patch("src.tui.tui_select", return_value=[]), \
+                 patch("src.ui.plain_ui.PlainUI.select_repos", return_value=[]), \
                  patch("src.commit.warn_gpg_signing"), \
                  patch("src.safety.acquire_lock") as mock_lock, \
                  patch("builtins.input", side_effect=capture_input), \
@@ -272,7 +277,7 @@ class TestFlockBeforeWork(unittest.TestCase):
 
             with patch("subprocess.run", return_value=mock_proc), \
                  patch("src.fetch.fetch_repos", side_effect=fake_fetch), \
-                 patch("src.tui.tui_select", return_value=[]), \
+                 patch("src.ui.plain_ui.PlainUI.select_repos", return_value=[]), \
                  patch("src.commit.warn_gpg_signing"), \
                  patch("src.safety.acquire_lock", return_value=FakeLock()), \
                  patch("src.state.xdg_state_dir", return_value=state_dir):
@@ -311,7 +316,7 @@ class TestLimitCap(unittest.TestCase):
             with patch.dict(os.environ, {"LIMIT": "2000"}, clear=False), \
                  patch("subprocess.run", return_value=mock_proc), \
                  patch("src.fetch.fetch_repos", side_effect=fake_fetch), \
-                 patch("src.tui.tui_select", return_value=[]), \
+                 patch("src.ui.plain_ui.PlainUI.select_repos", return_value=[]), \
                  patch("src.commit.warn_gpg_signing"), \
                  patch("src.safety.acquire_lock") as mock_lock, \
                  patch("src.state.xdg_state_dir", return_value=state_dir):
@@ -343,7 +348,7 @@ class TestLimitCap(unittest.TestCase):
             with patch.dict(os.environ, {"LIMIT": "500"}, clear=False), \
                  patch("subprocess.run", return_value=mock_proc), \
                  patch("src.fetch.fetch_repos", side_effect=fake_fetch), \
-                 patch("src.tui.tui_select", return_value=[]), \
+                 patch("src.ui.plain_ui.PlainUI.select_repos", return_value=[]), \
                  patch("src.commit.warn_gpg_signing"), \
                  patch("src.safety.acquire_lock") as mock_lock, \
                  patch("src.state.xdg_state_dir", return_value=state_dir):
@@ -383,7 +388,7 @@ class TestResumeIntegration(unittest.TestCase):
 
             with patch("subprocess.run", return_value=mock_proc), \
                  patch("src.fetch.fetch_repos", return_value=repos), \
-                 patch("src.tui.tui_select", return_value=[]) as mock_tui, \
+                 patch("src.ui.plain_ui.PlainUI.select_repos", return_value=[]) as mock_tui, \
                  patch("src.commit.warn_gpg_signing"), \
                  patch("src.safety.acquire_lock") as mock_lock, \
                  patch("src.state.xdg_state_dir", return_value=state_dir), \
@@ -420,7 +425,7 @@ class TestResumeIntegration(unittest.TestCase):
 
             with patch("subprocess.run", return_value=mock_proc), \
                  patch("src.fetch.fetch_repos", return_value=repos), \
-                 patch("src.tui.tui_select", side_effect=fake_tui), \
+                 patch("src.ui.plain_ui.PlainUI.select_repos", side_effect=fake_tui), \
                  patch("src.commit.warn_gpg_signing"), \
                  patch("src.safety.acquire_lock") as mock_lock, \
                  patch("src.state.xdg_state_dir", return_value=state_dir), \
@@ -458,7 +463,7 @@ class TestEmptySelectionShortCircuit(unittest.TestCase):
 
             with patch("subprocess.run", return_value=mock_proc), \
                  patch("src.fetch.fetch_repos", return_value=repos), \
-                 patch("src.tui.tui_select", return_value=[]), \
+                 patch("src.ui.plain_ui.PlainUI.select_repos", return_value=[]), \
                  patch("src.commit.warn_gpg_signing"), \
                  patch("src.safety.acquire_lock") as mock_lock, \
                  patch("src.state.xdg_state_dir", return_value=state_dir), \
@@ -483,7 +488,7 @@ class TestEmptySelectionShortCircuit(unittest.TestCase):
 
             with patch("subprocess.run", return_value=mock_proc), \
                  patch("src.fetch.fetch_repos", return_value=[_make_repo()]), \
-                 patch("src.tui.tui_select", return_value=[]), \
+                 patch("src.ui.plain_ui.PlainUI.select_repos", return_value=[]), \
                  patch("src.commit.warn_gpg_signing"), \
                  patch("src.safety.acquire_lock") as mock_lock, \
                  patch("src.state.xdg_state_dir", return_value=state_dir):
@@ -751,11 +756,10 @@ class TestProcessRepo(unittest.TestCase):
                     state_store=state_store,
                 )
 
-            # process_repo must signal the outer loop to stop
-            # by returning a sentinel value or raising StopIteration / SystemExit
-            self.assertIn(
+            # process_repo must signal the outer loop to stop with the "quit" sentinel.
+            self.assertEqual(
                 result,
-                ("quit", None),
+                "quit",
                 "process_repo should return 'quit' sentinel when review_loop returns quit",
             )
 
@@ -791,7 +795,7 @@ class TestMainOrchestration(unittest.TestCase):
 
             with patch("subprocess.run", return_value=mock_proc), \
                  patch("src.fetch.fetch_repos", return_value=repos), \
-                 patch("src.tui.tui_select", return_value=repos), \
+                 patch("src.ui.plain_ui.PlainUI.select_repos", return_value=repos), \
                  patch("src.commit.warn_gpg_signing"), \
                  patch("src.safety.acquire_lock") as mock_lock, \
                  patch("src.state.xdg_state_dir", return_value=state_dir), \
@@ -816,7 +820,7 @@ class TestMainOrchestration(unittest.TestCase):
 
             with patch("subprocess.run", return_value=mock_proc), \
                  patch("src.fetch.fetch_repos", return_value=[]), \
-                 patch("src.tui.tui_select", return_value=[]), \
+                 patch("src.ui.plain_ui.PlainUI.select_repos", return_value=[]), \
                  patch("src.commit.warn_gpg_signing"), \
                  patch("src.safety.acquire_lock") as mock_lock, \
                  patch("src.state.xdg_state_dir", return_value=state_dir):

@@ -28,11 +28,13 @@ import os
 import shutil
 import subprocess
 import sys
+import termios
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from src import safety, secrets
+from src.ui import ReviewContext, UI
 
 # Skill bundled in this repo at <program_root>/.claude/skills/create-readme/.
 # Staged into each target repo before invoking claude, then removed so the
@@ -143,6 +145,31 @@ def _restore_baseline(repo_dir: Path) -> None:
     )
 
 
+def _open_tty() -> int | None:
+    """Return fd for /dev/tty if available, else None."""
+    try:
+        return os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return None
+
+
+def _save_tty_attrs(fd: int):
+    """Return termios attrs for fd, or None if not a tty."""
+    try:
+        return termios.tcgetattr(fd)
+    except (OSError, termios.error):
+        return None
+
+
+def _restore_tty_attrs(fd: int, attrs) -> None:
+    if attrs is None:
+        return
+    try:
+        termios.tcsetattr(fd, termios.TCSADRAIN, attrs)
+    except (OSError, termios.error):
+        pass
+
+
 def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess | None:
     """Run claude and return its CompletedProcess.
 
@@ -152,6 +179,8 @@ def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess 
     spawned claude session discovers it, then removes it after the run.
     """
     _stage_skill(repo_dir)
+    tty_fd = _open_tty()
+    saved = _save_tty_attrs(tty_fd) if tty_fd is not None else None
     try:
         return subprocess.run(
             ["claude", "-p", "/create-readme", "--permission-mode", "acceptEdits"],
@@ -161,11 +190,18 @@ def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess 
             capture_output=True,
             text=True,
             env=_scrub_env_for_claude(),
+            stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
         return None
     finally:
         _unstage_skill(repo_dir)
+        if tty_fd is not None:
+            _restore_tty_attrs(tty_fd, saved)
+            try:
+                os.close(tty_fd)
+            except OSError:
+                pass
 
 
 def _blast_radius_ok(repo_dir: Path) -> tuple[bool, str]:
@@ -217,6 +253,20 @@ def _build_diff(old_content: str, new_content: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _tty_input(prompt: str) -> str:
+    """Read a line from /dev/tty, falling back to builtin input()."""
+    try:
+        with open("/dev/tty", "r+") as tty:
+            tty.write(prompt)
+            tty.flush()
+            line = tty.readline()
+            if line == "":
+                raise EOFError
+            return line.rstrip("\r\n")
+    except (OSError, EOFError):
+        return input(prompt)
+
+
 def _prompt_risky_files(risky: list[Path]) -> str:
     """Display risky-file warning and prompt [c]ontinue / [s]kip."""
     print(f"\nWARNING: found {len(risky)} risky file(s) in repo:")
@@ -225,7 +275,7 @@ def _prompt_risky_files(risky: list[Path]) -> str:
     if len(risky) > 10:
         print(f"  ... and {len(risky) - 10} more")
     while True:
-        raw = input("[c]ontinue / [s]kip > ").strip().lower()
+        raw = _tty_input("[c]ontinue / [s]kip > ").strip().lower()
         if raw in ("c", "s"):
             return raw
 
@@ -233,7 +283,7 @@ def _prompt_risky_files(risky: list[Path]) -> str:
 def _prompt_timeout() -> str:
     """Prompt after claude timeout: [r]etry / [s]kip / [q]uit."""
     while True:
-        raw = input("\nClaude timed out. [r]etry / [s]kip / [q]uit > ").strip().lower()
+        raw = _tty_input("\nClaude timed out. [r]etry / [s]kip / [q]uit > ").strip().lower()
         if raw in ("r", "s", "q"):
             return raw
 
@@ -241,7 +291,7 @@ def _prompt_timeout() -> str:
 def _prompt_nonzero() -> str:
     """Prompt after claude non-zero exit: [r]edo / [d]iscard."""
     while True:
-        raw = input("\nClaude exited with non-zero status. [r]edo / [d]iscard > ").strip().lower()
+        raw = _tty_input("\nClaude exited with non-zero status. [r]edo / [d]iscard > ").strip().lower()
         if raw in ("r", "d"):
             return raw
 
@@ -254,7 +304,7 @@ def _prompt_secret_override(matches: list[str]) -> str:
         print(f"  {m!r}")
     print("=" * 60)
     print("Type 'yes-i-checked' to accept anyway, or anything else to discard.")
-    raw = input("Override > ").strip()
+    raw = _tty_input("Override > ").strip()
     return raw
 
 
@@ -282,7 +332,7 @@ def _prompt_accept(
     )
 
     while True:
-        raw = input(prompt_str).strip()
+        raw = _tty_input(prompt_str).strip()
 
         if raw == "v":
             diff_text = _build_diff(old_content, new_content)
@@ -326,6 +376,10 @@ def review_loop(
     repo_dir: Path,
     had_readme_before: bool,
     claude_timeout: int = 300,
+    ui: UI | None = None,
+    repo_index: int = 1,
+    repo_total: int = 1,
+    repo_name: str = "",
 ) -> ReviewResult:
     """Run the full review FSM for one repository.
 
@@ -333,6 +387,11 @@ def review_loop(
         repo_dir: Path to the cloned repository directory.
         had_readme_before: Whether a README existed before this pipeline run.
         claude_timeout: Seconds to allow Claude before triggering timeout prompt.
+        ui: Optional UI instance for rendering review/progress screens.
+            When None, falls back to plain stdout/stdin prompts.
+        repo_index: 1-based index of this repo within a batch (used in headers).
+        repo_total: Total number of repos in the current batch.
+        repo_name: Human-readable repository name (used in headers).
 
     Returns:
         ReviewResult with status in {"accepted", "skipped", "failed", "quit"}.
@@ -346,14 +405,25 @@ def review_loop(
 
     # Capture old README content once (before any modifications)
     old_content = _read_file(repo_dir / "README.md")
+    prev_draft: str | None = None  # last Claude output before a redo iteration
 
     # Main FSM loop
+    iteration = 0
     while True:
+        iteration += 1
         # Step 2: Baseline restore invariant
         _restore_baseline(repo_dir)
 
-        # Invoke Claude
-        proc = _invoke_claude(repo_dir, claude_timeout)
+        # Invoke Claude (with spinner if a UI was supplied)
+        spinner_label = (
+            f"{'Re-generating' if iteration > 1 else 'Generating'} README"
+            f"{f' for {repo_name}' if repo_name else ''}…"
+        )
+        if ui is not None:
+            with ui.spinner(spinner_label):
+                proc = _invoke_claude(repo_dir, claude_timeout)
+        else:
+            proc = _invoke_claude(repo_dir, claude_timeout)
 
         # Handle timeout
         if proc is None:
@@ -392,7 +462,24 @@ def review_loop(
             # Proceed to accept prompt with override
 
         # Step 5: Accept prompt with view toggles
-        outcome = _prompt_accept(repo_dir, had_readme_before, old_content, new_content)
+        if ui is not None:
+            ctx = ReviewContext(
+                repo_name=repo_name or repo_dir.name,
+                index=repo_index,
+                total=repo_total,
+                head_readme=old_content or None,
+                prev_draft=prev_draft,
+                current_draft=new_content,
+            )
+            choice = ui.show_review(ctx)
+            outcome = {
+                "accept": "accepted",
+                "redo": "redo",
+                "discard": "skipped",
+                "quit": "quit",
+            }.get(choice, "skipped")
+        else:
+            outcome = _prompt_accept(repo_dir, had_readme_before, old_content, new_content)
 
         if outcome == "accepted":
             return ReviewResult(status="accepted", reason=None)
@@ -401,6 +488,10 @@ def review_loop(
             safety.ensure_clean(repo_dir)
             return ReviewResult(status="skipped", reason="user_discarded")
 
-        # "redo" → loop back to step 2
-        # old_content stays the same (captured once at step 1)
+        if outcome == "quit":
+            safety.ensure_clean(repo_dir)
+            return ReviewResult(status="quit", reason="user_quit")
+
+        # "redo" → remember this draft as prev for next iteration
+        prev_draft = new_content
         continue

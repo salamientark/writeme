@@ -56,6 +56,7 @@ class SelectionState:
     selected: frozenset
     viewport_start: int
     viewport_height: int
+    filter: str = ""
 
     # ------------------------------------------------------------------
     # Core mutation helpers (return new instances)
@@ -87,38 +88,95 @@ class SelectionState:
         if not self.repos:
             return replace(self)
 
-        n = len(self.repos)
-        new_cursor = max(0, min(n - 1, self.cursor + delta))
+        visible = self.visible_indices
+        if not visible:
+            return replace(self)
 
-        # Compute new viewport_start to keep cursor in view
+        # Operate in visible-position space so cursor never lands on hidden rows
+        # and viewport_start stays consistent with _render_select's slicing.
+        cur_vp = visible.index(self.cursor) if self.cursor in visible else 0
+        new_vp = max(0, min(len(visible) - 1, cur_vp + delta))
+        new_cursor = visible[new_vp]
+
         new_vp_start = self.viewport_start
 
-        # Cursor scrolled below visible window
-        if new_cursor >= new_vp_start + self.viewport_height:
-            new_vp_start = new_cursor - self.viewport_height + 1
+        if new_vp >= new_vp_start + self.viewport_height:
+            new_vp_start = new_vp - self.viewport_height + 1
+        if new_vp < new_vp_start:
+            new_vp_start = new_vp
 
-        # Cursor scrolled above visible window
-        if new_cursor < new_vp_start:
-            new_vp_start = new_cursor
-
-        # Clamp viewport_start to valid range
-        new_vp_start = max(0, min(n - 1, new_vp_start))
+        new_vp_start = max(0, min(max(0, len(visible) - self.viewport_height), new_vp_start))
 
         return replace(self, cursor=new_cursor, viewport_start=new_vp_start)
 
     def select_all(self) -> "SelectionState":
-        """Mark every repo as selected.
-
-        Returns a new SelectionState; original is unchanged.
-        """
-        return replace(self, selected=frozenset(range(len(self.repos))))
+        """Mark every visible repo as selected (preserves out-of-filter selections)."""
+        visible = set(self.visible_indices)
+        return replace(self, selected=frozenset(self.selected | visible))
 
     def select_none(self) -> "SelectionState":
-        """Clear all selections.
+        """Clear selections of visible repos (preserves out-of-filter selections)."""
+        visible = set(self.visible_indices)
+        return replace(self, selected=frozenset(self.selected - visible))
 
-        Returns a new SelectionState; original is unchanged.
-        """
-        return replace(self, selected=frozenset())
+    # ------------------------------------------------------------------
+    # Filter / jump / page (Stage 2)
+    # ------------------------------------------------------------------
+
+    def apply_filter(self, q: str) -> "SelectionState":
+        """Set filter substring; clamp cursor to visible range; scroll viewport to cursor."""
+        new = replace(self, filter=q, viewport_start=0)
+        if not new.repos:
+            return new
+        visible = new.visible_indices
+        if not visible:
+            return new
+        cursor = self.cursor if self.cursor in visible else visible[0]
+        cur_vp = visible.index(cursor)
+        vp_start = 0
+        if cur_vp >= self.viewport_height:
+            vp_start = cur_vp - self.viewport_height + 1
+        vp_start = max(0, min(max(0, len(visible) - self.viewport_height), vp_start))
+        return replace(new, cursor=cursor, viewport_start=vp_start)
+
+    def clear_filter(self) -> "SelectionState":
+        return replace(self, filter="")
+
+    def jump_top(self) -> "SelectionState":
+        visible = self.visible_indices
+        if not visible:
+            return self
+        return replace(self, cursor=visible[0], viewport_start=0)
+
+    def jump_bottom(self) -> "SelectionState":
+        visible = self.visible_indices
+        if not visible:
+            return self
+        new_cursor = visible[-1]
+        new_vp = max(0, len(visible) - self.viewport_height)
+        return replace(self, cursor=new_cursor, viewport_start=new_vp)
+
+    def page_down(self) -> "SelectionState":
+        return self.move(self.viewport_height)
+
+    def page_up(self) -> "SelectionState":
+        return self.move(-self.viewport_height)
+
+    @property
+    def visible_indices(self) -> tuple[int, ...]:
+        """Indices into self.repos matching current filter (case-insensitive)."""
+        if not self.filter:
+            return tuple(range(len(self.repos)))
+        q = self.filter.lower()
+        return tuple(i for i, r in enumerate(self.repos) if q in r.name.lower())
+
+    @property
+    def hidden_selected_count(self) -> int:
+        """Count of selected repos not in current visible_indices."""
+        if not self.filter:
+            return 0
+        visible = set(self.visible_indices)
+        return sum(1 for i in self.selected if i not in visible)
 
     # ------------------------------------------------------------------
     # Read-only query
