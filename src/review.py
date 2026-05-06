@@ -480,7 +480,7 @@ def review_loop(
     old_content = (
         pregenerated.old_content
         if pregenerated is not None
-        else (_restore_baseline(repo_dir) or _read_file(repo_dir / "README.md"))
+        else _read_file(repo_dir / "README.md")
     )
     prev_draft: str | None = None  # last Claude output before a redo iteration
     pre = pregenerated  # consumed on first iteration
