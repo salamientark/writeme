@@ -45,39 +45,6 @@ def _open_tty_rd():
         return None
 
 
-def _read_key(rd) -> str:
-    """Read a single key, including arrow / PgUp-Dn / SGR mouse sequences."""
-    import termios
-    import tty
-    fd = rd.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setcbreak(fd)
-        ch = rd.read(1)
-        if not ch:
-            return ""
-        if ch != b"\x1b":
-            return ch.decode("utf-8", "ignore")
-        b1 = rd.read(1)
-        if b1 != b"[":
-            return "\x1b" + b1.decode("ascii", "ignore")
-        seq = b"\x1b["
-        while True:
-            b = rd.read(1)
-            if not b:
-                break
-            seq += b
-            # CSI terminators: any letter (incl. mouse 'M'/'m') or '~'.
-            if b.isalpha() or b == b"~":
-                break
-            # Cap length so a stray ESC[ doesn't block forever.
-            if len(seq) > 32:
-                break
-        return seq.decode("ascii", "ignore")
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-
-
 def _enable_mouse() -> None:
     """Enable SGR-extended mouse reporting (wheel + click events)."""
     sys.stdout.write("\x1b[?1000h\x1b[?1006h")
@@ -91,7 +58,7 @@ def _disable_mouse() -> None:
 
 def _parse_mouse_button(seq: str) -> int | None:
     """Return SGR mouse button code from `\\x1b[<B;C;R[Mm]`, or None."""
-    if not seq.startswith("\x1b[<") or not seq[-1:] in ("M", "m"):
+    if not seq.startswith("\x1b[<") or seq[-1:] not in ("M", "m"):
         return None
     inner = seq[3:-1]
     parts = inner.split(";")
@@ -219,9 +186,6 @@ class RichUI:
         for idx in slice_indices:
             repo = state.repos[idx]
             check = "[x]" if idx in state.selected else "[ ]"
-            badge = Text("HAS README", style="green") if repo.had_readme_before else Text("")
-            name = Text(repo.name)
-            date = Text(repo.pushed_at, style="dim")
             row_style = "reverse bold" if idx == state.cursor else ""
             table.add_row(
                 Text(check, style=row_style),
@@ -331,6 +295,7 @@ class RichUI:
         return panel, total
 
     def show_review(self, ctx: ReviewContext) -> str:
+        from .keys import read_key_raw
         rd = _open_tty_rd()
         if rd is None or not sys.stdout.isatty():
             panel, _ = self._render_review_panel("README", ctx, 0, 10_000)
@@ -354,7 +319,7 @@ class RichUI:
                         _VIEWS[view_idx], ctx, offsets[view_idx], viewport
                     )
                     screen.update(panel)
-                    key = _read_key(rd)
+                    key = read_key_raw(rd)
                     max_off = max(0, total - viewport)
 
                     btn = _parse_mouse_button(key)

@@ -41,13 +41,19 @@ def _decode(seq: str) -> str:
     return seq
 
 
-def read_key(rd) -> str:
-    """Read a single key from *rd* (a /dev/tty bytes file). Returns symbolic name.
+_ESC_TIMEOUT = 0.05
+_RAW_SEQ_CAP = 32
 
-    Names: 'up','down','left','right','home','end','pgup','pgdn','delete',
-    'enter','space','esc','backspace', or the literal character.
-    Empty string on EOF.
+
+def read_key_raw(rd) -> str:
+    """Read a single key, returning the raw sequence (no symbolic decoding).
+
+    Returns the raw escape sequence (e.g. ``"\\x1b[A"``, ``"\\x1b[<0;12;5M"``)
+    or single character for non-escape keys. Empty string on EOF.
+    Callers needing symbolic names should use :func:`read_key`; callers needing
+    raw bytes (e.g. SGR mouse parsing) should use this.
     """
+    import select
     import termios
     import tty
     fd = rd.fileno()
@@ -58,22 +64,40 @@ def read_key(rd) -> str:
         if not ch:
             return ""
         if ch != b"\x1b":
-            return _decode(ch.decode("utf-8", "ignore"))
+            return ch.decode("utf-8", "ignore")
+        # Disambiguate standalone Esc from start of escape sequence.
+        ready, _, _ = select.select([fd], [], [], _ESC_TIMEOUT)
+        if not ready:
+            return "\x1b"
         b1 = rd.read(1)
         if not b1:
-            return "esc"
+            return "\x1b"
         if b1 != b"[":
-            return _decode("\x1b" + b1.decode("ascii", "ignore"))
+            return "\x1b" + b1.decode("ascii", "ignore")
         seq = b"\x1b["
         while True:
             b = rd.read(1)
             if not b:
                 break
             seq += b
+            # CSI terminators: any letter (incl. mouse 'M'/'m') or '~'.
             if b.isalpha() or b == b"~":
                 break
-            if len(seq) > 8:
+            if len(seq) > _RAW_SEQ_CAP:
                 break
-        return _decode(seq.decode("ascii", "ignore"))
+        return seq.decode("ascii", "ignore")
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def read_key(rd) -> str:
+    """Read a single key from *rd* and return its symbolic name.
+
+    Names: 'up','down','left','right','home','end','pgup','pgdn','delete',
+    'enter','space','esc','backspace', or the literal character.
+    Empty string on EOF.
+    """
+    raw = read_key_raw(rd)
+    if raw == "":
+        return ""
+    return _decode(raw)

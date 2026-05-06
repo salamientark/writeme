@@ -44,11 +44,11 @@ class TestDiffVsHead(unittest.TestCase):
             ui_diff.NO_HEAD_DIFF,
         )
 
-    def test_empty_head_returns_fallback(self) -> None:
-        self.assertEqual(
-            ui_diff.diff_vs_head("", "new draft\n"),
-            ui_diff.NO_HEAD_DIFF,
-        )
+    def test_empty_head_produces_real_diff(self) -> None:
+        # Empty-but-tracked baseline is a valid state; only None means "no prior".
+        out = ui_diff.diff_vs_head("", "new draft\n")
+        self.assertNotEqual(out, ui_diff.NO_HEAD_DIFF)
+        self.assertIn("+new draft", out)
 
     def test_real_diff_uses_head_label(self) -> None:
         out = ui_diff.diff_vs_head("old\n", "new\n")
@@ -65,11 +65,11 @@ class TestDiffVsPrev(unittest.TestCase):
             ui_diff.NO_PREV_DIFF,
         )
 
-    def test_empty_prev_returns_fallback(self) -> None:
-        self.assertEqual(
-            ui_diff.diff_vs_prev("", "new\n"),
-            ui_diff.NO_PREV_DIFF,
-        )
+    def test_empty_prev_produces_real_diff(self) -> None:
+        # Empty-but-present prev draft is valid; only None means "first iteration".
+        out = ui_diff.diff_vs_prev("", "new\n")
+        self.assertNotEqual(out, ui_diff.NO_PREV_DIFF)
+        self.assertIn("+new", out)
 
     def test_real_diff_uses_prev_label(self) -> None:
         out = ui_diff.diff_vs_prev("draft1\n", "draft2\n")

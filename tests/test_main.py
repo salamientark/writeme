@@ -58,6 +58,11 @@ class TestArgParsing(unittest.TestCase):
         self.assertFalse(ns.resume)
         self.assertFalse(ns.clean)
         self.assertFalse(ns.skip_ci)
+        self.assertFalse(ns.plain)
+
+    def test_plain_flag(self):
+        ns = self._parse(["--plain"])
+        self.assertTrue(ns.plain)
 
     def test_mode_pr(self):
         ns = self._parse(["--mode", "pr"])
@@ -405,9 +410,8 @@ class TestResumeIntegration(unittest.TestCase):
         repos = [_make_repo("repo-a"), _make_repo("repo-b")]
         tui_received = []
 
-        def fake_tui(self_or_rs, rs=None):
-            real = rs if rs is not None else self_or_rs
-            tui_received.extend(real)
+        def fake_tui(rs):
+            tui_received.extend(rs)
             return []
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -752,11 +756,10 @@ class TestProcessRepo(unittest.TestCase):
                     state_store=state_store,
                 )
 
-            # process_repo must signal the outer loop to stop
-            # by returning a sentinel value or raising StopIteration / SystemExit
-            self.assertIn(
+            # process_repo must signal the outer loop to stop with the "quit" sentinel.
+            self.assertEqual(
                 result,
-                ("quit", None),
+                "quit",
                 "process_repo should return 'quit' sentinel when review_loop returns quit",
             )
 

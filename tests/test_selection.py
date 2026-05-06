@@ -519,6 +519,27 @@ class TestFilterAndJump(unittest.TestCase):
         s2 = s.select_none()
         self.assertEqual(s2.selected, frozenset({1}))
 
+    # Regression: cursor must stay in visible_indices when a filter is active.
+    def test_move_down_stays_in_visible_after_filter(self) -> None:
+        s = self._state(["alpha", "beta", "alphabet"]).apply_filter("alpha")
+        s2 = s.move(1)
+        self.assertIn(s2.cursor, s2.visible_indices)
+
+    def test_move_up_stays_in_visible_after_filter(self) -> None:
+        s = self._state(["alpha", "beta", "alphabet"]).apply_filter("alpha")
+        s2 = s.move(1).move(-1)
+        self.assertIn(s2.cursor, s2.visible_indices)
+
+    def test_page_down_stays_in_visible_after_filter(self) -> None:
+        s = self._state(["alpha", "beta", "alphabet"]).apply_filter("alpha")
+        s2 = s.page_down()
+        self.assertIn(s2.cursor, s2.visible_indices)
+
+    def test_page_up_stays_in_visible_after_filter(self) -> None:
+        s = self._state(["alpha", "beta", "alphabet"]).apply_filter("alpha")
+        s2 = s.page_down().page_up()
+        self.assertIn(s2.cursor, s2.visible_indices)
+
 
 if __name__ == "__main__":
     unittest.main()

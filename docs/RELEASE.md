@@ -132,9 +132,14 @@ Do not retag. The launcher served from the release branch carries the pinned SHA
 git push origin "$VERSION"
 git push origin release/$VERSION
 
+NOTES_ARG="--generate-notes"
+if [ -f "docs/RELEASE-NOTES-$VERSION.md" ]; then
+  NOTES_ARG="--notes-file docs/RELEASE-NOTES-$VERSION.md"
+fi
+
 gh release create "$VERSION" \
   --title "$VERSION" \
-  --notes-file docs/RELEASE-NOTES-$VERSION.md \
+  $NOTES_ARG \
   install.sh \
   gh_readme_pipeline.py
 

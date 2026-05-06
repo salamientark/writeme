@@ -28,6 +28,7 @@ import os
 import shutil
 import subprocess
 import sys
+import termios
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -155,9 +156,8 @@ def _open_tty() -> int | None:
 def _save_tty_attrs(fd: int):
     """Return termios attrs for fd, or None if not a tty."""
     try:
-        import termios
         return termios.tcgetattr(fd)
-    except Exception:
+    except (OSError, termios.error):
         return None
 
 
@@ -165,9 +165,8 @@ def _restore_tty_attrs(fd: int, attrs) -> None:
     if attrs is None:
         return
     try:
-        import termios
         termios.tcsetattr(fd, termios.TCSADRAIN, attrs)
-    except Exception:
+    except (OSError, termios.error):
         pass
 
 
@@ -388,6 +387,11 @@ def review_loop(
         repo_dir: Path to the cloned repository directory.
         had_readme_before: Whether a README existed before this pipeline run.
         claude_timeout: Seconds to allow Claude before triggering timeout prompt.
+        ui: Optional UI instance for rendering review/progress screens.
+            When None, falls back to plain stdout/stdin prompts.
+        repo_index: 1-based index of this repo within a batch (used in headers).
+        repo_total: Total number of repos in the current batch.
+        repo_name: Human-readable repository name (used in headers).
 
     Returns:
         ReviewResult with status in {"accepted", "skipped", "failed", "quit"}.

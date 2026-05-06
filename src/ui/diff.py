@@ -29,13 +29,13 @@ def unified(old: str, new: str, *, fromfile: str, tofile: str) -> str:
 
 def diff_vs_head(head: str | None, current: str) -> str:
     """Diff committed README against current draft. Fallback if no HEAD README."""
-    if not head:
+    if head is None:
         return NO_HEAD_DIFF
     return unified(head, current, fromfile=_HEAD_LABEL, tofile=_DRAFT_LABEL)
 
 
 def diff_vs_prev(prev: str | None, current: str) -> str:
     """Diff previous Claude draft against current. Fallback on first iteration."""
-    if not prev:
+    if prev is None:
         return NO_PREV_DIFF
     return unified(prev, current, fromfile=_PREV_LABEL, tofile=_DRAFT_LABEL)

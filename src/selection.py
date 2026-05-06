@@ -88,22 +88,24 @@ class SelectionState:
         if not self.repos:
             return replace(self)
 
-        n = len(self.repos)
-        new_cursor = max(0, min(n - 1, self.cursor + delta))
+        visible = self.visible_indices
+        if not visible:
+            return replace(self)
 
-        # Compute new viewport_start to keep cursor in view
+        # Operate in visible-position space so cursor never lands on hidden rows
+        # and viewport_start stays consistent with _render_select's slicing.
+        cur_vp = visible.index(self.cursor) if self.cursor in visible else 0
+        new_vp = max(0, min(len(visible) - 1, cur_vp + delta))
+        new_cursor = visible[new_vp]
+
         new_vp_start = self.viewport_start
 
-        # Cursor scrolled below visible window
-        if new_cursor >= new_vp_start + self.viewport_height:
-            new_vp_start = new_cursor - self.viewport_height + 1
+        if new_vp >= new_vp_start + self.viewport_height:
+            new_vp_start = new_vp - self.viewport_height + 1
+        if new_vp < new_vp_start:
+            new_vp_start = new_vp
 
-        # Cursor scrolled above visible window
-        if new_cursor < new_vp_start:
-            new_vp_start = new_cursor
-
-        # Clamp viewport_start to valid range
-        new_vp_start = max(0, min(n - 1, new_vp_start))
+        new_vp_start = max(0, min(max(0, len(visible) - self.viewport_height), new_vp_start))
 
         return replace(self, cursor=new_cursor, viewport_start=new_vp_start)
 
