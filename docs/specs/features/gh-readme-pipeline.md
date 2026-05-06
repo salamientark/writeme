@@ -1,9 +1,8 @@
-# gh-readme-pipeline — Design v2
+# gh-readme-pipeline — Design
 
 **Date:** 2026-04-29
-**Status:** Approved (revised after design-flaws review; integrates self-destruct/sandbox model)
-**Supersedes:** `2026-04-29-gh-readme-pipeline-design.md` and the prior v2 of this file
-**Companion:** `2026-04-29-self-destruct-plan.md` (lifecycle source of truth)
+**Status:** Approved
+**Companion:** `docs/specs/features/self-destruct.md` (lifecycle source of truth)
 
 ## Purpose
 
@@ -404,12 +403,11 @@ github-readme-pipeline/
 ├── tests/
 │   ├── test_install.py     # launcher integration tests
 │   └── test_*.py           # Python unit tests
-├── docs/superpowers/specs/
-│   ├── 2026-04-29-gh-readme-pipeline-design.md         (v1, superseded)
-│   ├── 2026-04-29-gh-readme-pipeline-design-v2.md      (this file)
-│   ├── 2026-04-29-self-destruct-plan.md                (lifecycle source of truth)
-│   ├── 2026-04-29-gh-readme-pipeline-implementation-plan.md
-│   └── design-flaws.md
+├── docs/specs/features/
+│   ├── gh-readme-pipeline.md           (this file)
+│   └── self-destruct.md                (lifecycle source of truth)
+├── docs/roadmap/
+│   └── gh-readme-pipeline-implementation-plan.md
 └── README.md                       # documents `curl | bash` invocation + NUKE_ON_FAIL
 ```
 

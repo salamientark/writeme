@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # gh-readme-pipeline launcher: ephemeral mktemp sandbox, no persistent install.
-# See docs/superpowers/specs/2026-04-29-gh-readme-pipeline-design-v2.md
+# See docs/specs/features/gh-readme-pipeline.md
 set -euo pipefail
 
 NUKE_ON_FAIL="${NUKE_ON_FAIL:-0}"
