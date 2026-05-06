@@ -117,21 +117,25 @@ def generate_draft(
     claude_timeout: int = 300,
     ui: UI | None = None,
     repo_name: str = "",
+    env: dict[str, str] | None = None,
 ) -> GenerationResult:
     """Run risky scan + baseline restore + claude + blast-radius + secret scan.
 
     Pure: no user prompts. Used by parallel WorkerPool. Returns a
     GenerationResult that the sequential review thread consumes.
+
+    `env` is passed through to the claude subprocess; used by parallel
+    workers to inject per-job XDG sandbox paths without mutating os.environ.
     """
     risky = tuple(secrets.scan_repo_for_risky_files(repo_dir))
-    old_content = _read_file(repo_dir / "README.md")
     _restore_baseline(repo_dir)
+    old_content = _read_file(repo_dir / "README.md")
     label = f"Generating README{f' for {repo_name}' if repo_name else ''}…"
     if ui is not None:
         with ui.spinner(label):
-            proc = _invoke_claude(repo_dir, claude_timeout)
+            proc = _invoke_claude(repo_dir, claude_timeout, env=env)
     else:
-        proc = _invoke_claude(repo_dir, claude_timeout)
+        proc = _invoke_claude(repo_dir, claude_timeout, env=env)
     if proc is None:
         return GenerationResult("timeout", old_content, None, risky)
     if proc.returncode != 0:
@@ -224,17 +228,28 @@ def _restore_tty_attrs(fd: int, attrs) -> None:
         pass
 
 
-def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess | None:
+def _invoke_claude(
+    repo_dir: Path,
+    timeout: int,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess | None:
     """Run claude and return its CompletedProcess.
 
     Returns None on TimeoutExpired (caller must handle).
 
     Stages the bundled /create-readme skill into repo_dir/.claude/ so the
     spawned claude session discovers it, then removes it after the run.
+
+    `env` overrides specific environment variables for this subprocess only
+    (e.g. per-worker XDG sandbox paths). Avoids mutating os.environ which is
+    process-global and unsafe under threaded parallel execution.
     """
     _stage_skill(repo_dir)
     tty_fd = _open_tty()
     saved = _save_tty_attrs(tty_fd) if tty_fd is not None else None
+    base_env = _scrub_env_for_claude()
+    if env:
+        base_env.update(env)
     try:
         return subprocess.run(
             ["claude", "-p", "/create-readme", "--permission-mode", "acceptEdits"],
@@ -243,7 +258,7 @@ def _invoke_claude(repo_dir: Path, timeout: int) -> subprocess.CompletedProcess 
             check=False,
             capture_output=True,
             text=True,
-            env=_scrub_env_for_claude(),
+            env=base_env,
             stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
@@ -465,7 +480,7 @@ def review_loop(
     old_content = (
         pregenerated.old_content
         if pregenerated is not None
-        else _read_file(repo_dir / "README.md")
+        else (_restore_baseline(repo_dir) or _read_file(repo_dir / "README.md"))
     )
     prev_draft: str | None = None  # last Claude output before a redo iteration
     pre = pregenerated  # consumed on first iteration

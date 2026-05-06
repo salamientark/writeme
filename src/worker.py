@@ -8,8 +8,10 @@ Wraps ``concurrent.futures.ThreadPoolExecutor`` with two extras:
 * a ``drain()`` switch that prevents not-yet-started jobs from running.
 
 Each worker invokes a caller-supplied ``generate_fn(repo) -> Any`` that does
-the slow work (clone + claude). Exceptions are converted to
-``("failed", str(exc))`` so a single bad repo never poisons the queue.
+the slow work (clone + claude). ``generate_fn`` is expected to handle its own
+errors; ``completed()`` has a safety-net catch for unhandled exceptions and
+yields ``("failed", repo_name, msg)`` so a single bad repo never poisons
+the queue.
 """
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ class WorkerPool:
         self._fn = generate_fn
         self._exec: ThreadPoolExecutor | None = None
         self._futures: list[Future] = []
+        self._fut_to_repo: dict[Future, Repo] = {}
         self._draining = threading.Event()
         self._submitted = False
 
@@ -44,15 +47,14 @@ class WorkerPool:
             return
         self._exec = ThreadPoolExecutor(max_workers=self.max_workers)
         for repo in repos:
-            self._futures.append(self._exec.submit(self._run, repo))
+            fut = self._exec.submit(self._run, repo)
+            self._futures.append(fut)
+            self._fut_to_repo[fut] = repo
 
     def _run(self, repo: Repo) -> Any:
         if self._draining.is_set():
             return ("drained", repo.name)
-        try:
-            return self._fn(repo)
-        except Exception as exc:  # noqa: BLE001 — isolate worker failures
-            return ("failed", f"{type(exc).__name__}: {exc}")
+        return self._fn(repo)
 
     def completed(self) -> Iterator[Any]:
         """Yield results in completion (FIFO) order, then shut down the pool."""
@@ -65,7 +67,9 @@ class WorkerPool:
                 try:
                     result = fut.result()
                 except Exception as exc:  # noqa: BLE001
-                    yield ("failed", f"{type(exc).__name__}: {exc}")
+                    repo = self._fut_to_repo.get(fut)
+                    name = repo.name if repo is not None else "unknown"
+                    yield ("failed", name, f"{type(exc).__name__}: {exc}")
                     continue
                 if isinstance(result, tuple) and result and result[0] == "drained":
                     continue

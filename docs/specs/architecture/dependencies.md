@@ -3,6 +3,7 @@
 # Dependencies
 
 ## Runtime
+
 | Dep | Version | Why |
 |-----|---------|-----|
 | Python | >=3.11 | declared in script header (`# /// script`) |
@@ -21,6 +22,7 @@ No HTTP libs — all network via `gh` subprocess. No DB driver.
 - CI installs uv via `astral-sh/setup-uv@v3` (mem 1719).
 
 ## External services
+
 | Service | Used for | Module |
 |---------|----------|--------|
 | GitHub GraphQL | repo listing, rate limit | `src/fetch.py` |

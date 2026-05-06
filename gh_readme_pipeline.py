@@ -383,21 +383,18 @@ def _run_parallel(*, selected, ns, state_store, commit_message, ui) -> str | Non
     def generate(repo):
         repo_dir = _clone_or_fetch(repo, ns.repos_dir)
         # P7: per-job XDG sandbox dir avoids claude session DB races.
+        # Pass env through to the subprocess instead of mutating os.environ
+        # (process-global, unsafe under threaded parallelism).
         try:
             paths = sandbox_for(sandbox_root, repo.name)
             sb_env = sandbox_env(paths)
-            old_env = {k: os.environ.get(k) for k in sb_env}
-            os.environ.update(sb_env)
-            try:
-                gen = review_mod.generate_draft(
-                    repo_dir, ns.claude_timeout, ui=None, repo_name=repo.name
-                )
-            finally:
-                for k, v in old_env.items():
-                    if v is None:
-                        os.environ.pop(k, None)
-                    else:
-                        os.environ[k] = v
+            gen = review_mod.generate_draft(
+                repo_dir,
+                ns.claude_timeout,
+                ui=None,
+                repo_name=repo.name,
+                env=sb_env,
+            )
         except Exception as exc:  # noqa: BLE001
             return (repo, None, repo_dir, str(exc))
         return (repo, gen, repo_dir, None)
@@ -412,6 +409,10 @@ def _run_parallel(*, selected, ns, state_store, commit_message, ui) -> str | Non
             queued = max(0, total - done - ns.parallel)
             running = min(ns.parallel, total - done)
             ui.status_line(done, total, running, queued)
+            if isinstance(item, tuple) and len(item) >= 2 and item[0] == "failed":
+                ui.warn(f"{item[1]}: worker failure ({item[2]})")
+                state_store.record(str(item[1]), "failed", error=str(item[2]))
+                continue
             if not isinstance(item, tuple) or len(item) != 4:
                 continue
             repo, gen, _repo_dir, err = item

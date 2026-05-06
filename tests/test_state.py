@@ -450,7 +450,7 @@ class TestStateStoreConcurrent(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             store = StateStore("user", state_dir=Path(td))
-            barrier = threading.Barrier(20)
+            barrier = threading.Barrier(20, timeout=10)
 
             def writer(i):
                 barrier.wait()

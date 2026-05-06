@@ -35,17 +35,26 @@ prompt_resume(count) → "resume" | "fresh" | "quit"
 ```
 Storage: JSON file in XDG state dir.
 
-## Review — `src/review.py` (497 lines)
+## Review — `src/review.py` (609 lines)
 ```
-review_loop(repo_dir, ui, timeout) → ReviewResult
+generate_draft(repo_dir, timeout, ui, repo_name, env) → GenerationResult
+  _restore_baseline                    # git checkout README.md (HEAD)
+  _invoke_claude(repo_dir, timeout, env)  # subprocess, scrubbed env
+  _blast_radius_ok(repo_dir)           # only README.md may change
+  _read_file                           # capture generated content
+
+review_loop(repo_dir, ui, timeout, pregenerated, ...) → ReviewResult
+  _prompt_risky_files / _prompt_timeout / _prompt_nonzero
+  _prompt_secret_override / _prompt_accept
   _stage_skill / _unstage_skill        # copies /create-readme skill in
   _invoke_claude(repo_dir, timeout)    # subprocess, scrubbed env
   _blast_radius_ok(repo_dir)           # only README.md may change
   _build_diff(old, new)                # unified diff
-  _prompt_accept / _prompt_redo / _prompt_secret_override
   _restore_baseline                    # git checkout README.md on abort
+  _show_pager                          # less -R pager for diff
 ```
-Result codes: `accepted | redo | discard | quit | error`.
+ReviewResult.status: `accepted | skipped | failed | quit`.
+GenerationResult.status: `ready | timeout | nonzero | blast_radius | failed`.
 
 ## Commit — `src/commit.py` (325 lines)
 ```

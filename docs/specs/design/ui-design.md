@@ -17,7 +17,7 @@ Reality vs. design after merge of `feat-pipeline`:
 
 Behavioural deltas from the locked design:
 
-- **Glyphs** are ASCII `[x]`/`[ ]`, not `■`/`□`. Curses cursor uses `reverse bold`. Done deliberately for terminal-compat (see commit `e75cca5`).
+- **Glyphs** are ASCII `[x]`/`[ ]`, not `■`/`□`. Selection row uses Rich `reverse` + `bold` styling for the cursor line. Done deliberately for terminal-compat (see commit `e75cca5`).
 - **Review scroll** is always-on (`j`/`k`/`g`/`G`/`PgUp`/`PgDn`/space/`b`), not the opt-in `s`-to-enter mode the design proposed. The line-buffered concern was sidestepped by running review entirely under `console.screen()` with `read_key_raw`.
 - **Mouse wheel** scrolls the review screen. Not in original design (added post-design — memory 1697, 1700). Click/drag are ignored.
 - **Per-view scroll offsets** in review preserve position when toggling README / diff / raw via `tab` / `1` / `2` / `v`.

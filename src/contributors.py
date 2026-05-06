@@ -24,7 +24,7 @@ from src.selection import Repo
 # ---------------------------------------------------------------------------
 
 _BOT_RE = re.compile(
-    r"(.*\[bot\]$|^dependabot.*|^github-actions.*)",
+    r"(.*\[bot\]$|^dependabot(-preview)?$|^github-actions$)",
     re.IGNORECASE,
 )
 
@@ -80,9 +80,9 @@ def fetch_contributors(owner: str, name: str) -> tuple[str, ...]:
         f"/repos/{owner}/{name}/contributors?per_page=2",
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, check=True)
-    except subprocess.CalledProcessError:
-        # 404 (empty repo), 403, etc. — treat as 0 contributors.
+        result = subprocess.run(cmd, capture_output=True, check=True, timeout=15)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        # 404 (empty repo), 403, timeout, etc. — treat as 0 contributors.
         return ()
     try:
         payload = json.loads(result.stdout or b"[]")

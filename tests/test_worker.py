@@ -47,9 +47,10 @@ class TestWorkerPool(unittest.TestCase):
         pool.submit_all(repos)
         results = list(pool.completed())
         self.assertEqual(len(results), 1)
-        status, payload = results[0]
+        status, name, msg = results[0]
         self.assertEqual(status, "failed")
-        self.assertIn("kaboom", payload)
+        self.assertEqual(name, "boom")
+        self.assertIn("kaboom", msg)
 
     def test_max_workers_capped(self):
         from src.worker import WorkerPool
@@ -83,7 +84,7 @@ class TestWorkerPool(unittest.TestCase):
         results = list(pool.completed())
         # at least 1 ran; remaining should be drained / cancelled
         self.assertGreaterEqual(len(results), 1)
-        self.assertLessEqual(len(started), 4)
+        self.assertLess(len(started), len(repos), "drain() should prevent some queued jobs from starting")
 
 
 if __name__ == "__main__":

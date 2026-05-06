@@ -11,8 +11,8 @@ CLI tool, no server, no DB. Persistent state = JSON in XDG dirs. Ephemeral sandb
 ```
 parse_args → _resolve_user → fetch_repos (gh GraphQL)
   → make_ui → SelectionState (TUI pick)
-    → for repo: _clone_or_fetch → process_repo
-        → review_loop (claude subprocess, diff, secrets)
+    → for repo: _clone_or_fetch → generate_draft (parallel WorkerPool)
+        → process_repo → review_loop (claude subprocess, diff, secrets)
         → commit_and_push (pr | direct | commit-only)
   → _print_summary  → StateStore.save
 ```
@@ -30,6 +30,10 @@ parse_args → _resolve_user → fetch_repos (gh GraphQL)
 | Safety| `src/secrets.py`         | secret regex scan, risky-file scan |
 | Safety| `src/unpushed.py`        | warn on dirty/unpushed cache repos |
 | UI    | `src/ui/`                | `protocol.UI` + `RichUI`/`PlainUI` (`make_ui` TTY-aware factory); helpers: `diff`, `keys`, `logo`, `range_parser` |
+| Domain| `src/filters.py`         | Predicate-based repo filters (solo/fork/readme) |
+| Domain| `src/contributors.py`    | REST contributor enrichment, on-disk cache, bot filtering |
+| Safety| `src/sandbox.py`         | Per-job XDG sandbox dir isolation for claude subprocess |
+| Infra | `src/worker.py`          | `WorkerPool` (bounded `ThreadPoolExecutor`), parallel dispatch |
 
 ## Sandbox / install
 `install.sh` → `mktemp` dir → `EXPECTED_SHA` verify → `uv run gh_readme_pipeline.py`. No HOME pollution.
