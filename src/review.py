@@ -90,6 +90,60 @@ class ReviewResult:
     reason: str | None
 
 
+@dataclass(frozen=True)
+class GenerationResult:
+    """Outcome of one Claude README generation.
+
+    Phase 2: produced by parallel WorkerPool, consumed by sequential review_loop.
+
+    Fields:
+        status: "ready" | "timeout" | "nonzero" | "blast_radius" | "failed"
+        old_content: README.md text at HEAD (empty when no README existed).
+        new_content: generated README.md text (None unless status == "ready").
+        risky_files: tuple of risky paths discovered pre-generation.
+        secret_matches: tuple of secret-like substrings found in new_content.
+        error: human-readable error string (set on failed/blast_radius).
+    """
+    status: str
+    old_content: str
+    new_content: str | None
+    risky_files: tuple = ()
+    secret_matches: tuple = ()
+    error: str | None = None
+
+
+def generate_draft(
+    repo_dir: Path,
+    claude_timeout: int = 300,
+    ui: UI | None = None,
+    repo_name: str = "",
+) -> GenerationResult:
+    """Run risky scan + baseline restore + claude + blast-radius + secret scan.
+
+    Pure: no user prompts. Used by parallel WorkerPool. Returns a
+    GenerationResult that the sequential review thread consumes.
+    """
+    risky = tuple(secrets.scan_repo_for_risky_files(repo_dir))
+    old_content = _read_file(repo_dir / "README.md")
+    _restore_baseline(repo_dir)
+    label = f"Generating README{f' for {repo_name}' if repo_name else ''}…"
+    if ui is not None:
+        with ui.spinner(label):
+            proc = _invoke_claude(repo_dir, claude_timeout)
+    else:
+        proc = _invoke_claude(repo_dir, claude_timeout)
+    if proc is None:
+        return GenerationResult("timeout", old_content, None, risky)
+    if proc.returncode != 0:
+        return GenerationResult("nonzero", old_content, None, risky)
+    ok, reason = _blast_radius_ok(repo_dir)
+    if not ok:
+        return GenerationResult("blast_radius", old_content, None, risky, error=reason)
+    new_content = _read_file(repo_dir / "README.md")
+    matches = tuple(secrets.scan_text_for_secrets(new_content))
+    return GenerationResult("ready", old_content, new_content, risky, matches)
+
+
 # ---------------------------------------------------------------------------
 # Pager helper
 # ---------------------------------------------------------------------------
@@ -380,6 +434,7 @@ def review_loop(
     repo_index: int = 1,
     repo_total: int = 1,
     repo_name: str = "",
+    pregenerated: GenerationResult | None = None,
 ) -> ReviewResult:
     """Run the full review FSM for one repository.
 
@@ -396,37 +451,78 @@ def review_loop(
     Returns:
         ReviewResult with status in {"accepted", "skipped", "failed", "quit"}.
     """
-    # Step 1: Pre-Claude risky-file scan
-    risky = secrets.scan_repo_for_risky_files(repo_dir)
+    # Step 1: Pre-Claude risky-file scan (skipped when pregenerated supplies it)
+    if pregenerated is not None:
+        risky = list(pregenerated.risky_files)
+    else:
+        risky = secrets.scan_repo_for_risky_files(repo_dir)
     if risky:
         choice = _prompt_risky_files(risky)
         if choice == "s":
             return ReviewResult(status="skipped", reason="risky_files_found")
 
     # Capture old README content once (before any modifications)
-    old_content = _read_file(repo_dir / "README.md")
+    old_content = (
+        pregenerated.old_content
+        if pregenerated is not None
+        else _read_file(repo_dir / "README.md")
+    )
     prev_draft: str | None = None  # last Claude output before a redo iteration
+    pre = pregenerated  # consumed on first iteration
 
     # Main FSM loop
     iteration = 0
     while True:
         iteration += 1
-        # Step 2: Baseline restore invariant
-        _restore_baseline(repo_dir)
 
-        # Invoke Claude (with spinner if a UI was supplied)
-        spinner_label = (
-            f"{'Re-generating' if iteration > 1 else 'Generating'} README"
-            f"{f' for {repo_name}' if repo_name else ''}…"
-        )
-        if ui is not None:
-            with ui.spinner(spinner_label):
-                proc = _invoke_claude(repo_dir, claude_timeout)
+        if pre is not None:
+            # Use pregenerated result for this iteration; subsequent redo iterations
+            # fall through to in-line claude invocation below.
+            gen_status = pre.status
+            new_content = pre.new_content
+            secret_matches_pre = list(pre.secret_matches)
+            blast_reason = pre.error or "claude_touched_other_files"
+            pre = None
         else:
-            proc = _invoke_claude(repo_dir, claude_timeout)
+            # Step 2: Baseline restore invariant
+            _restore_baseline(repo_dir)
+
+            # Invoke Claude (with spinner if a UI was supplied)
+            spinner_label = (
+                f"{'Re-generating' if iteration > 1 else 'Generating'} README"
+                f"{f' for {repo_name}' if repo_name else ''}…"
+            )
+            if ui is not None:
+                with ui.spinner(spinner_label):
+                    proc = _invoke_claude(repo_dir, claude_timeout)
+            else:
+                proc = _invoke_claude(repo_dir, claude_timeout)
+
+            if proc is None:
+                gen_status = "timeout"
+                new_content = None
+                secret_matches_pre = []
+                blast_reason = ""
+            elif proc.returncode != 0:
+                gen_status = "nonzero"
+                new_content = None
+                secret_matches_pre = []
+                blast_reason = ""
+            else:
+                ok, reason = _blast_radius_ok(repo_dir)
+                if not ok:
+                    gen_status = "blast_radius"
+                    new_content = None
+                    secret_matches_pre = []
+                    blast_reason = reason
+                else:
+                    new_content = _read_file(repo_dir / "README.md")
+                    secret_matches_pre = secrets.scan_text_for_secrets(new_content)
+                    gen_status = "ready"
+                    blast_reason = ""
 
         # Handle timeout
-        if proc is None:
+        if gen_status == "timeout":
             choice = _prompt_timeout()
             if choice == "r":
                 continue  # retry → back to step 2
@@ -437,7 +533,7 @@ def review_loop(
             return ReviewResult(status="quit", reason="claude_timeout")
 
         # Handle non-zero exit
-        if proc.returncode != 0:
+        if gen_status == "nonzero":
             choice = _prompt_nonzero()
             if choice == "r":
                 continue  # redo → back to step 2
@@ -445,17 +541,18 @@ def review_loop(
             safety.ensure_clean(repo_dir)
             return ReviewResult(status="skipped", reason="claude_nonzero_exit")
 
-        # Step 3: Blast-radius guard
-        ok, reason = _blast_radius_ok(repo_dir)
-        if not ok:
+        # Step 3: Blast-radius guard outcome
+        if gen_status == "blast_radius":
             safety.ensure_clean(repo_dir)
-            return ReviewResult(status="failed", reason=reason)
+            return ReviewResult(status="failed", reason=blast_reason)
 
-        # Step 4: Secret scan on new README content
-        new_content = _read_file(repo_dir / "README.md")
-        secret_matches = secrets.scan_text_for_secrets(new_content)
-        if secret_matches:
-            override = _prompt_secret_override(secret_matches)
+        if gen_status == "failed":
+            safety.ensure_clean(repo_dir)
+            return ReviewResult(status="failed", reason=blast_reason or "generation_failed")
+
+        # Step 4: Secret scan outcome
+        if secret_matches_pre:
+            override = _prompt_secret_override(secret_matches_pre)
             if override != "yes-i-checked":
                 safety.ensure_clean(repo_dir)
                 return ReviewResult(status="skipped", reason="secrets_detected")
@@ -479,7 +576,7 @@ def review_loop(
                 "quit": "quit",
             }.get(choice, "skipped")
         else:
-            outcome = _prompt_accept(repo_dir, had_readme_before, old_content, new_content)
+            outcome = _prompt_accept(repo_dir, had_readme_before, old_content, new_content or "")
 
         if outcome == "accepted":
             return ReviewResult(status="accepted", reason=None)

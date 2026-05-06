@@ -121,6 +121,27 @@ class TestArgParsing(unittest.TestCase):
             ns = parse_args([])
         self.assertTrue(ns.skip_ci)
 
+    def test_parallel_default(self):
+        env = {k: v for k, v in os.environ.items() if k != "WRITEME_PARALLEL"}
+        with patch.dict(os.environ, env, clear=True):
+            from gh_readme_pipeline import parse_args, DEFAULT_PARALLEL
+            ns = parse_args([])
+        self.assertEqual(ns.parallel, DEFAULT_PARALLEL)
+
+    def test_parallel_flag_caps_at_8(self):
+        ns = self._parse(["--parallel", "99"])
+        self.assertEqual(ns.parallel, 8)
+
+    def test_parallel_flag_floors_at_1(self):
+        ns = self._parse(["--parallel", "0"])
+        self.assertEqual(ns.parallel, 1)
+
+    def test_parallel_env_fallback(self):
+        with patch.dict(os.environ, {"WRITEME_PARALLEL": "5"}, clear=False):
+            from gh_readme_pipeline import parse_args
+            ns = parse_args([])
+        self.assertEqual(ns.parallel, 5)
+
 
 # ---------------------------------------------------------------------------
 # --clean flag

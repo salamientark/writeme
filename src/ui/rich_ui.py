@@ -482,3 +482,10 @@ class RichUI:
 
     def error(self, message: str) -> None:
         self.console.print(f"[bold red]error:[/bold red] {message}")
+
+    def status_line(
+        self, done: int, total: int, running: int, queued: int
+    ) -> None:
+        self.console.print(
+            f"[dim][{done}/{total}] running={running} queued={queued}[/dim]"
+        )

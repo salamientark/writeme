@@ -437,3 +437,32 @@ class TestGhUserValidation(unittest.TestCase):
             StateStore("octocat", state_dir=Path(td))
             StateStore("user-name", state_dir=Path(td))
             StateStore("a", state_dir=Path(td))
+
+
+# ---------------------------------------------------------------------------
+# Concurrency lock — Phase 2 (P8)
+# ---------------------------------------------------------------------------
+
+class TestStateStoreConcurrent(unittest.TestCase):
+    def test_concurrent_record_writes_all_lines(self):
+        import threading
+        from src.state import StateStore
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore("user", state_dir=Path(td))
+            barrier = threading.Barrier(20)
+
+            def writer(i):
+                barrier.wait()
+                store.record(f"repo{i}", "pushed")
+
+            threads = [threading.Thread(target=writer, args=(i,)) for i in range(20)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            records = store._read_all()
+            self.assertEqual(len(records), 20)
+            names = {r["repo"] for r in records}
+            self.assertEqual(len(names), 20)
