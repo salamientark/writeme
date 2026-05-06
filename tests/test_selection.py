@@ -466,6 +466,14 @@ class TestFilterAndJump(unittest.TestCase):
         s = self._state(["alpha", "beta", "gamma"], cursor=2).apply_filter("alpha")
         self.assertIn(s.cursor, s.visible_indices)
 
+    def test_apply_filter_scrolls_viewport_to_keep_cursor_visible(self) -> None:
+        # 20 repos all matching filter, viewport_height=5, cursor at end.
+        names = [f"r{i:02d}" for i in range(20)]
+        s = self._state(names, cursor=18, h=5).apply_filter("r")
+        cur_vp = s.visible_indices.index(s.cursor)
+        self.assertGreaterEqual(cur_vp, s.viewport_start)
+        self.assertLess(cur_vp, s.viewport_start + s.viewport_height)
+
     def test_hidden_selected_count(self) -> None:
         s = self._state(
             ["alpha", "beta", "gamma"], selected=[0, 1, 2]

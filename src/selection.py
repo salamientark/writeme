@@ -124,7 +124,7 @@ class SelectionState:
     # ------------------------------------------------------------------
 
     def apply_filter(self, q: str) -> "SelectionState":
-        """Set filter substring; clamp cursor to visible range; reset viewport."""
+        """Set filter substring; clamp cursor to visible range; scroll viewport to cursor."""
         new = replace(self, filter=q, viewport_start=0)
         if not new.repos:
             return new
@@ -132,7 +132,12 @@ class SelectionState:
         if not visible:
             return new
         cursor = self.cursor if self.cursor in visible else visible[0]
-        return replace(new, cursor=cursor)
+        cur_vp = visible.index(cursor)
+        vp_start = 0
+        if cur_vp >= self.viewport_height:
+            vp_start = cur_vp - self.viewport_height + 1
+        vp_start = max(0, min(max(0, len(visible) - self.viewport_height), vp_start))
+        return replace(new, cursor=cursor, viewport_start=vp_start)
 
     def clear_filter(self) -> "SelectionState":
         return replace(self, filter="")
