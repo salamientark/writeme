@@ -140,9 +140,9 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 	}
 
 	type prepResult struct {
-		Repo            fetch.Repo
-		Generation      review.GenerationResult
-		Err             error
+		Repo       fetch.Repo
+		Generation review.GenerationResult
+		Err        error
 	}
 
 	sandboxBase := filepath.Join(cfg.ReposDir, ".sandbox")
@@ -180,8 +180,12 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 		}
 		gen := pr.Generation
 		if gen.Status != review.StatusReady {
-			_ = store.Record(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: string(gen.Status)})
-			fmt.Fprintf(deps.Stderr, "FAILED %s: %s\n", pr.Repo.Name, gen.Status)
+			errMsg := string(gen.Status)
+			if gen.Error != "" {
+				errMsg = string(gen.Status) + ": " + gen.Error
+			}
+			_ = store.Record(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: errMsg})
+			fmt.Fprintf(deps.Stderr, "FAILED %s: %s\n", pr.Repo.Name, errMsg)
 			continue
 		}
 		// Render diff + prompt.

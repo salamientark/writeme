@@ -13,9 +13,9 @@ import (
 
 // Finding describes one repo with unpushed work.
 type Finding struct {
-	Path             string
-	Dirty            bool
-	UnpushedCommits  int
+	Path            string
+	Dirty           bool
+	UnpushedCommits int
 }
 
 // Scan returns sorted findings under reposDir.

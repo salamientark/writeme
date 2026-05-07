@@ -10,14 +10,14 @@ import (
 
 // Repo is the minimal subset filters operate on. Mirrors fetch.Repo fields.
 type Repo struct {
-	Name             string
-	SSHURL           string
-	PushedAt         string
-	HadReadmeBefore  bool
-	DiskUsage        int
-	IsFork           bool
-	Contributors     []string
-	HasContributors  bool // true once contributor enrichment has run
+	Name            string
+	SSHURL          string
+	PushedAt        string
+	HadReadmeBefore bool
+	DiskUsage       int
+	IsFork          bool
+	Contributors    []string
+	HasContributors bool // true once contributor enrichment has run
 }
 
 // IsSolo reports whether contributors ≤ 1 (post-bot-strip). False if not enriched.

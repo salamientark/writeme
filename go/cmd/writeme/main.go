@@ -99,31 +99,5 @@ func printSummary(store *state.Store) {
 	if err != nil {
 		return
 	}
-	fmt.Println("--- Summary ---")
-	for _, k := range []struct {
-		label  string
-		status string
-	}{
-		{"Pushed (PR)", state.StatusPROpened},
-		{"Pushed (direct)", state.StatusPushed},
-		{"Commit only", state.StatusCommitOnly},
-		{"Skipped", state.StatusSkipped},
-		{"Failed", state.StatusFailed},
-	} {
-		fmt.Printf("  %-20s %d\n", k.label, sum.Counts[k.status])
-	}
-	if len(sum.PRURLs) > 0 {
-		fmt.Println()
-		fmt.Println("PR URLs:")
-		for _, u := range sum.PRURLs {
-			fmt.Printf("  %s\n", u)
-		}
-	}
-	if len(sum.FailedRepos) > 0 {
-		fmt.Println()
-		fmt.Println("Failed repos:")
-		for _, r := range sum.FailedRepos {
-			fmt.Printf("  %s\n", r)
-		}
-	}
+	pipeline.PrintSummary(os.Stdout, sum)
 }

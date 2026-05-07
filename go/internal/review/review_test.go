@@ -29,12 +29,12 @@ func TestScrubEnv(t *testing.T) {
 	}
 	got := ScrubEnv(base, []string{"XDG_CACHE_HOME=/c"})
 	want := map[string]bool{
-		"PATH=/usr/bin":      true,
-		"HOME=/home/u":       true,
+		"PATH=/usr/bin":       true,
+		"HOME=/home/u":        true,
 		"CLAUDE_API_KEY=keep": true,
-		"LC_ALL=C":           true,
-		"XDG_CONFIG_HOME=/x": true,
-		"XDG_CACHE_HOME=/c":  true,
+		"LC_ALL=C":            true,
+		"XDG_CONFIG_HOME=/x":  true,
+		"XDG_CACHE_HOME=/c":   true,
 	}
 	for kv := range want {
 		found := false

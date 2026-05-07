@@ -3,6 +3,7 @@ package state
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,6 +120,58 @@ func (s *Store) HasPriorState() bool {
 	return err == nil
 }
 
+// marshalRecord serializes a Record to match Python json.dumps default
+// separators (", ", ": "), preserving Phase-0 byte parity (G8).
+func marshalRecord(r Record) ([]byte, error) {
+	var b bytes.Buffer
+	b.WriteByte('{')
+	first := true
+	put := func(k, v string) error {
+		if !first {
+			b.WriteString(", ")
+		}
+		first = false
+		kb, err := json.Marshal(k)
+		if err != nil {
+			return err
+		}
+		b.Write(kb)
+		b.WriteString(": ")
+		vb, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		b.Write(vb)
+		return nil
+	}
+	if err := put("repo", r.Repo); err != nil {
+		return nil, err
+	}
+	if err := put("status", r.Status); err != nil {
+		return nil, err
+	}
+	if err := put("ts", r.TS); err != nil {
+		return nil, err
+	}
+	if r.Mode != "" {
+		if err := put("mode", r.Mode); err != nil {
+			return nil, err
+		}
+	}
+	if r.Error != "" {
+		if err := put("error", r.Error); err != nil {
+			return nil, err
+		}
+	}
+	if r.PRURL != "" {
+		if err := put("pr_url", r.PRURL); err != nil {
+			return nil, err
+		}
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
+}
+
 // Record appends one record.
 func (s *Store) Record(repo, status string, opts RecordOpts) error {
 	rec := Record{
@@ -129,7 +182,7 @@ func (s *Store) Record(repo, status string, opts RecordOpts) error {
 		Error:  opts.Error,
 		PRURL:  opts.PRURL,
 	}
-	data, err := json.Marshal(rec)
+	data, err := marshalRecord(rec)
 	if err != nil {
 		return fmt.Errorf("marshal record: %w", err)
 	}

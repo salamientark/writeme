@@ -35,10 +35,10 @@ type Result struct {
 
 // Options for CommitAndPush.
 type Options struct {
-	Mode             Mode
-	HadReadmeBefore  bool
-	DryRun           bool
-	SkipCI           bool
+	Mode                  Mode
+	HadReadmeBefore       bool
+	DryRun                bool
+	SkipCI                bool
 	CommitMessageOverride string // empty → use default "docs: <verb> README"
 }
 

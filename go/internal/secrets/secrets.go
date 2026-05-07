@@ -22,9 +22,7 @@ var secretPatterns = []*regexp.Regexp{
 func Scan(s string) []string {
 	var out []string
 	for _, re := range secretPatterns {
-		for _, m := range re.FindAllString(s, -1) {
-			out = append(out, m)
-		}
+		out = append(out, re.FindAllString(s, -1)...)
 	}
 	return out
 }

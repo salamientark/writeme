@@ -20,12 +20,12 @@ const (
 
 // Repo is the typed result for one repo.
 type Repo struct {
-	Name             string
-	SSHURL           string
-	PushedAt         string
-	HadReadmeBefore  bool
-	DiskUsage        int
-	IsFork           bool
+	Name            string
+	SSHURL          string
+	PushedAt        string
+	HadReadmeBefore bool
+	DiskUsage       int
+	IsFork          bool
 }
 
 // Fetcher lists owned repos for a user.
@@ -53,11 +53,11 @@ const GraphQLQuery = `query FetchRepos($login: String!, $first: Int!, $after: St
 
 // rawNode mirrors the JSON shape gh returns.
 type rawNode struct {
-	Name       string         `json:"name"`
-	SSHURL     string         `json:"sshUrl"`
-	PushedAt   string         `json:"pushedAt"`
-	DiskUsage  int            `json:"diskUsage"`
-	IsFork     bool           `json:"isFork"`
+	Name       string           `json:"name"`
+	SSHURL     string           `json:"sshUrl"`
+	PushedAt   string           `json:"pushedAt"`
+	DiskUsage  int              `json:"diskUsage"`
+	IsFork     bool             `json:"isFork"`
 	ReadmeMd   *json.RawMessage `json:"readmeMd"`
 	ReadmeLc   *json.RawMessage `json:"readmeLc"`
 	ReadmeCap  *json.RawMessage `json:"readmeCap"`

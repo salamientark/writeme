@@ -30,6 +30,14 @@ jobs:
       - run: go vet ./...
       - run: go build ./...
       - run: go test -race -cover ./...
+      - name: Per-package coverage gate (ubuntu only, G9)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go test -cover ./... | tee coverage.txt
+          bash scripts/coverage_gate.sh coverage.txt
+      - name: Coverage gate self-test (ubuntu only)
+        if: matrix.os == 'ubuntu-latest'
+        run: bash scripts/coverage_gate_test.sh
 
   lint:
     runs-on: ubuntu-latest

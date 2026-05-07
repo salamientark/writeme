@@ -1,32 +1,46 @@
+version: "2"
+
 run:
   timeout: 5m
   go: "1.23"
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
     - unused
-    - gofmt
-    - goimports
     - misspell
     - unconvert
     - unparam
     - revive
-
-linters-settings:
-  revive:
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*github.com/salamientark/writeme/internal/sandbox.Job).Cleanup
+    revive:
+      rules:
+        - name: var-naming
+        - name: exported
+          disabled: true
+  exclusions:
     rules:
-      - name: var-naming
-      - name: exported
-        disabled: true
+      - path: _test\.go
+        linters:
+          - unparam
+          - errcheck
+      - path: (.+)\.go$
+        text: "Error return value is not checked"
+        source: "defer "
 
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - unparam
+formatters:
+  enable:
+    - gofmt
+    - goimports

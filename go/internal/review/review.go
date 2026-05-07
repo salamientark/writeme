@@ -83,12 +83,12 @@ const (
 
 // GenerationResult mirrors the Python GenerationResult.
 type GenerationResult struct {
-	Status         Status
-	OldContent     string
-	NewContent     string
-	RiskyFiles     []string
-	SecretMatches  []string
-	Error          string
+	Status        Status
+	OldContent    string
+	NewContent    string
+	RiskyFiles    []string
+	SecretMatches []string
+	Error         string
 }
 
 // Runner invokes claude. Production = ShellRunner; tests inject fakes.
@@ -138,25 +138,23 @@ func (ShellRunner) Run(ctx context.Context, repoDir string, env []string) (int, 
 // claude → blast-radius → secret scan.
 func GenerateDraft(ctx context.Context, runner Runner, repoDir string, env []string) (GenerationResult, error) {
 	risky, _ := secrets.WalkRiskyFiles(repoDir)
-	if err := restoreBaseline(ctx, repoDir); err != nil {
-		return GenerationResult{}, fmt.Errorf("restore baseline: %w", err)
-	}
+	restoreBaseline(ctx, repoDir)
 	old := readFile(filepath.Join(repoDir, "README.md"))
 
 	cleanup, err := StageSkill(repoDir)
 	if err != nil {
 		return GenerationResult{}, fmt.Errorf("stage skill: %w", err)
 	}
-	exitCode, _, runErr := runner.Run(ctx, repoDir, env)
+	exitCode, stderr, runErr := runner.Run(ctx, repoDir, env)
 	cleanup() // unstage BEFORE blast-radius so .claude/ doesn't trigger guard.
 	if errors.Is(runErr, context.DeadlineExceeded) {
-		return GenerationResult{Status: StatusTimeout, OldContent: old, RiskyFiles: risky}, nil
+		return GenerationResult{Status: StatusTimeout, OldContent: old, RiskyFiles: risky, Error: stderr}, nil
 	}
 	if runErr != nil {
-		return GenerationResult{Status: StatusFailed, OldContent: old, RiskyFiles: risky, Error: runErr.Error()}, nil
+		return GenerationResult{Status: StatusFailed, OldContent: old, RiskyFiles: risky, Error: runErr.Error() + "\n" + stderr}, nil
 	}
 	if exitCode != 0 {
-		return GenerationResult{Status: StatusNonzero, OldContent: old, RiskyFiles: risky}, nil
+		return GenerationResult{Status: StatusNonzero, OldContent: old, RiskyFiles: risky, Error: fmt.Sprintf("exit=%d\n%s", exitCode, stderr)}, nil
 	}
 	touched, err := safety.BlastRadius(ctx, repoDir)
 	if err != nil {
@@ -188,7 +186,7 @@ func readFile(p string) string {
 	return string(b)
 }
 
-func restoreBaseline(ctx context.Context, dir string) error {
+func restoreBaseline(ctx context.Context, dir string) {
 	for _, args := range [][]string{
 		{"git", "checkout", "--", "README.md"},
 		{"git", "clean", "-f", "README.md"},
@@ -197,5 +195,4 @@ func restoreBaseline(ctx context.Context, dir string) error {
 		cmd.Dir = dir
 		_ = cmd.Run()
 	}
-	return nil
 }
