@@ -185,7 +185,7 @@ func GenerateDraft(ctx context.Context, runner Runner, repoDir string, env []str
 	newContent := readFile(filepath.Join(repoDir, "README.md"))
 	if old == newContent && newContent == "" {
 		// Nothing produced.
-		return GenerationResult{Status: StatusBlastRadius, OldContent: old, RiskyFiles: risky, Error: "claude_touched_other_files"}, nil
+		return GenerationResult{Status: StatusFailed, OldContent: old, RiskyFiles: risky, Error: "readme_not_generated"}, nil
 	}
 	matches := secrets.Scan(newContent)
 	return GenerationResult{

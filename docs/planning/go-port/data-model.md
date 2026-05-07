@@ -363,7 +363,7 @@ Serialization: not persisted directly. Outcomes propagate to `StateStore.Record(
 
 State transitions (one iteration):
 
-```
+```text
                    ┌─ timeout ─→ prompt → {retry|skip|quit}
                    │
 generate_draft ────┼─ nonzero ─→ prompt → {redo|discard}

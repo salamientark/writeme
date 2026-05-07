@@ -84,7 +84,9 @@ func TestCommitAndPushCommitOnly(t *testing.T) {
 func TestCommitAndPushDirectDryRun(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
-	_ = os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("GIT_AUTHOR_NAME", "t")
 	t.Setenv("GIT_AUTHOR_EMAIL", "t@t")
 	t.Setenv("GIT_COMMITTER_NAME", "t")
@@ -98,7 +100,9 @@ func TestCommitAndPushDirectDryRun(t *testing.T) {
 func TestCommitAndPushPRDryRun(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
-	_ = os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("GIT_AUTHOR_NAME", "t")
 	t.Setenv("GIT_AUTHOR_EMAIL", "t@t")
 	t.Setenv("GIT_COMMITTER_NAME", "t")
@@ -179,7 +183,9 @@ func TestCommitAndPushDirectReal(t *testing.T) {
 
 func TestCommitAndPushPRReal(t *testing.T) {
 	wd, _ := setupRepoWithRemote(t)
-	_ = os.WriteFile(filepath.Join(wd, "README.md"), []byte("x"), 0o644)
+	if err := os.WriteFile(filepath.Join(wd, "README.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("GIT_AUTHOR_NAME", "t")
 	t.Setenv("GIT_AUTHOR_EMAIL", "t@t")
 	t.Setenv("GIT_COMMITTER_NAME", "t")
@@ -188,6 +194,9 @@ func TestCommitAndPushPRReal(t *testing.T) {
 	r := CommitAndPush(context.Background(), wd, Options{Mode: ModePR})
 	if r.Status != "failed" || r.Mode != "pr" {
 		t.Errorf("got %+v", r)
+	}
+	if !strings.Contains(r.Error, "gh pr create") {
+		t.Errorf("expected error from gh pr create step, got %q", r.Error)
 	}
 }
 
@@ -240,7 +249,17 @@ func TestCloneOrFetchExisting(t *testing.T) {
 	}
 	c2 := exec.Command("git", "remote", "add", "origin", bare)
 	c2.Dir = dir
-	_, _ = c2.CombinedOutput()
+	if out, err := c2.CombinedOutput(); err != nil {
+		t.Fatalf("add remote: %v %s", err, out)
+	}
+	// Seed bare with a ref so shallow fetch succeeds.
+	c3 := exec.Command("git", "push", "-q", "origin", "main")
+	c3.Dir = dir
+	if out, err := c3.CombinedOutput(); err != nil {
+		t.Fatalf("push to bare: %v %s", err, out)
+	}
 	// Should detect .git and call Fetch.
-	_ = CloneOrFetch(context.Background(), bare, dir)
+	if err := CloneOrFetch(context.Background(), bare, dir); err != nil {
+		t.Fatalf("clone/fetch existing repo: %v", err)
+	}
 }
