@@ -56,6 +56,14 @@ func ScrubEnv(base []string, extra []string) []string {
 // Returns an idempotent cleanup func.
 func StageSkill(repoDir string) (func(), error) {
 	dst := filepath.Join(repoDir, ".claude", "skills", "create-readme", "SKILL.md")
+	var prev []byte
+	hadPrev := false
+	if b, err := os.ReadFile(dst); err == nil {
+		hadPrev = true
+		prev = b
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return func() {}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return func() {}, err
 	}
@@ -63,8 +71,13 @@ func StageSkill(repoDir string) (func(), error) {
 		return func() {}, err
 	}
 	return func() {
-		_ = os.RemoveAll(filepath.Join(repoDir, ".claude", "skills", "create-readme"))
-		// Try to drop empty parents.
+		if hadPrev {
+			_ = os.WriteFile(dst, prev, 0o644)
+			return
+		}
+		_ = os.Remove(dst)
+		// Drop only directories created by this call (Remove fails if non-empty).
+		_ = os.Remove(filepath.Join(repoDir, ".claude", "skills", "create-readme"))
 		_ = os.Remove(filepath.Join(repoDir, ".claude", "skills"))
 		_ = os.Remove(filepath.Join(repoDir, ".claude"))
 	}, nil
@@ -137,7 +150,10 @@ func (ShellRunner) Run(ctx context.Context, repoDir string, env []string) (int, 
 // GenerateDraft executes the full pipeline: risky scan → restore baseline →
 // claude → blast-radius → secret scan.
 func GenerateDraft(ctx context.Context, runner Runner, repoDir string, env []string) (GenerationResult, error) {
-	risky, _ := secrets.WalkRiskyFiles(repoDir)
+	risky, err := secrets.WalkRiskyFiles(repoDir)
+	if err != nil {
+		return GenerationResult{}, fmt.Errorf("walk risky files: %w", err)
+	}
 	restoreBaseline(ctx, repoDir)
 	old := readFile(filepath.Join(repoDir, "README.md"))
 

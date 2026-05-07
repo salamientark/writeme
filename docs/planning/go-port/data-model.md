@@ -200,7 +200,7 @@ Invariants:
 - `user` matches `^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$` (`src/state.py:22, 76-77`). Prevents path traversal in filename.
 - File is append-only. Each `Record()` writes one line + flushes (`src/state.py:118-122`).
 - Malformed lines are skipped by reader, not erased (`src/state.py:142-144`).
-- `LoadProcessed()` returns the set of repos whose **last** matching record has a terminal-success status. (Python implementation actually treats it as "any record with success status" via set comprehension at `state.py:155-159` — Go port should match.)
+- `LoadProcessed()` returns the set of repos that have **any** record with a terminal-success status (`state.py:155-159` set comprehension). Go port matches this contract.
 
 Serialization:
 - Format: JSONL (one JSON object per line, UTF-8).

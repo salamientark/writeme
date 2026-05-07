@@ -145,11 +145,13 @@ func runPR(ctx context.Context, dir, msg string, dryRun bool) Result {
 		return Result{Status: "failed", Mode: "pr", Error: err.Error()}
 	}
 	out, code, err := runOut(ctx, dir, "gh", "pr", "create", "--title", msg, "--body", PRBody)
-	url := ""
-	if err == nil && code == 0 {
-		url = strings.TrimSpace(out)
+	if err != nil {
+		return Result{Status: "failed", Mode: "pr", Error: err.Error()}
 	}
-	return Result{Status: "pr_opened", Mode: "pr", PRURL: url}
+	if code != 0 {
+		return Result{Status: "failed", Mode: "pr", Error: fmt.Sprintf("gh pr create failed (exit=%d): %s", code, strings.TrimSpace(out))}
+	}
+	return Result{Status: "pr_opened", Mode: "pr", PRURL: strings.TrimSpace(out)}
 }
 
 func runDirect(ctx context.Context, dir, msg string, dryRun bool) Result {

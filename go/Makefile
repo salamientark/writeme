@@ -1,3 +1,5 @@
+SHELL := /bin/bash
+
 .PHONY: build test test-race coverage-gate lint fmt vet tidy clean golden-update
 
 BIN := writeme
@@ -13,7 +15,7 @@ test-race:
 	go test -race -cover ./...
 
 coverage-gate:
-	go test -cover ./... | tee coverage.txt
+	set -o pipefail; go test -cover ./... 2>&1 | tee coverage.txt
 	bash scripts/coverage_gate.sh coverage.txt
 
 vet:

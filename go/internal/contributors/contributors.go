@@ -10,8 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
-	"strings"
 	"sync"
 )
 
@@ -78,9 +76,9 @@ func ShellFetch(ctx context.Context, owner, name string) ([]string, error) {
 		fmt.Sprintf("/repos/%s/%s/contributors?per_page=2", owner, name))
 	out, err := cmd.Output()
 	if err != nil {
-		// 404, 403, timeout etc → empty.
+		// 404, 403, timeout etc → empty (parity with Python contributors.py:84).
 		var ee *exec.ExitError
-		if errors.As(err, &ee) {
+		if errors.As(err, &ee) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, nil
 		}
 		return nil, err
@@ -167,8 +165,5 @@ func Enrich(ctx context.Context, owner string, repos []Repo, cachePath string, f
 	if err := SaveCache(cachePath, cache); err != nil {
 		return nil, fmt.Errorf("save cache: %w", err)
 	}
-	// Stable order: sort by repo name for determinism is overkill — preserve input order.
-	_ = sort.SliceStable
-	_ = strings.Join
 	return results, nil
 }

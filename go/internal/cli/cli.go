@@ -83,6 +83,13 @@ func Parse(argv []string, env Env, stderr io.Writer) (Config, error) {
 		return Config{}, err
 	}
 
+	skipCIFlagSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "skip-ci" {
+			skipCIFlagSet = true
+		}
+	})
+
 	switch Mode(modeFlag) {
 	case ModeUnset, ModePR, ModeDirect, ModeCommitOnly:
 		cfg.Mode = Mode(modeFlag)
@@ -110,7 +117,7 @@ func Parse(argv []string, env Env, stderr io.Writer) (Config, error) {
 		}
 	}
 
-	if !cfg.SkipCI {
+	if !skipCIFlagSet {
 		if v, ok := env("SKIP_CI"); ok && v != "" {
 			cfg.SkipCI = true
 		}

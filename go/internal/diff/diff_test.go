@@ -35,7 +35,9 @@ func TestPlain(t *testing.T) {
 	} {
 		c := exec.Command(args[0], args[1:]...)
 		c.Dir = dir
-		_, _ = c.CombinedOutput()
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("%v %s: %s", args, err, out)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# new\n"), 0o644); err != nil {
 		t.Fatal(err)

@@ -184,9 +184,9 @@ func TestCommitAndPushPRReal(t *testing.T) {
 	t.Setenv("GIT_AUTHOR_EMAIL", "t@t")
 	t.Setenv("GIT_COMMITTER_NAME", "t")
 	t.Setenv("GIT_COMMITTER_EMAIL", "t@t")
-	// gh pr create will fail (no real github), but push should succeed; status still pr_opened with empty PRURL.
+	// gh pr create will fail (no real github); push succeeds but PR creation failure surfaces as Status="failed".
 	r := CommitAndPush(context.Background(), wd, Options{Mode: ModePR})
-	if r.Status != "pr_opened" {
+	if r.Status != "failed" || r.Mode != "pr" {
 		t.Errorf("got %+v", r)
 	}
 }

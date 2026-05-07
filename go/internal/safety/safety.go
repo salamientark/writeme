@@ -76,7 +76,10 @@ func AcquireLock(path string) (release func() error, err error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, ErrLocked
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, ErrLocked
+		}
+		return nil, fmt.Errorf("flock %s: %w", path, err)
 	}
 	return func() error {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
@@ -94,11 +97,25 @@ func BlastRadius(ctx context.Context, repoDir string) ([]string, error) {
 		return nil, fmt.Errorf("git status: %w", err)
 	}
 	var paths []string
-	for _, entry := range strings.Split(string(out), "\x00") {
+	tokens := strings.Split(string(out), "\x00")
+	for i := 0; i < len(tokens); i++ {
+		entry := tokens[i]
 		if len(entry) < 4 {
 			continue
 		}
 		path := entry[3:]
+		// Rename (R) and copy (C) records emit "<XY> <new>\0<old>\0".
+		// Consume the trailing old-path token so it doesn't get re-parsed
+		// as if it had a status prefix.
+		if entry[0] == 'R' || entry[0] == 'C' || entry[1] == 'R' || entry[1] == 'C' {
+			if i+1 < len(tokens) {
+				old := tokens[i+1]
+				i++
+				if old != "" && old != "README.md" {
+					paths = append(paths, old)
+				}
+			}
+		}
 		if path == "README.md" {
 			continue
 		}

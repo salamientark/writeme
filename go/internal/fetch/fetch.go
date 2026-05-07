@@ -2,6 +2,7 @@
 package fetch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -66,6 +67,9 @@ type rawNode struct {
 }
 
 type rawPage struct {
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
 	Data struct {
 		User struct {
 			Repositories struct {
@@ -135,6 +139,9 @@ func (f *GHFetcher) ListRepos(ctx context.Context, user string, limit int) ([]Re
 		if err := json.Unmarshal(out, &page); err != nil {
 			return nil, fmt.Errorf("decode gh graphql: %w", err)
 		}
+		if len(page.Errors) > 0 {
+			return nil, fmt.Errorf("gh graphql errors: %s", page.Errors[0].Message)
+		}
 		for _, n := range page.Data.User.Repositories.Nodes {
 			r, err := decodeNode(n)
 			if err != nil {
@@ -162,6 +169,17 @@ func (f *GHFetcher) ListRepos(ctx context.Context, user string, limit int) ([]Re
 	return all, nil
 }
 
+// readmePresent reports whether a GraphQL readme field is a non-null object.
+// *json.RawMessage stays non-nil when the JSON value is literal `null`, so a
+// pointer check alone is insufficient.
+func readmePresent(raw *json.RawMessage) bool {
+	if raw == nil {
+		return false
+	}
+	b := bytes.TrimSpace(*raw)
+	return len(b) > 0 && string(b) != "null"
+}
+
 func decodeNode(n rawNode) (Repo, error) {
 	if err := safety.ValidateRepoName(n.Name); err != nil {
 		return Repo{}, err
@@ -169,8 +187,9 @@ func decodeNode(n rawNode) (Repo, error) {
 	if err := safety.ValidateSSHURL(n.SSHURL); err != nil {
 		return Repo{}, err
 	}
-	hasReadme := n.ReadmeMd != nil || n.ReadmeLc != nil || n.ReadmeCap != nil ||
-		n.ReadmeRst != nil || n.ReadmeDocs != nil
+	hasReadme := readmePresent(n.ReadmeMd) || readmePresent(n.ReadmeLc) ||
+		readmePresent(n.ReadmeCap) || readmePresent(n.ReadmeRst) ||
+		readmePresent(n.ReadmeDocs)
 	return Repo{
 		Name:            n.Name,
 		SSHURL:          n.SSHURL,
