@@ -3,6 +3,7 @@ package unpushed
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,7 +57,8 @@ func runGit(ctx context.Context, dir string, args ...string) (string, int) {
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	code := 0
-	if ee, ok := err.(*exec.ExitError); ok {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
 		code = ee.ExitCode()
 	} else if err != nil {
 		code = -1

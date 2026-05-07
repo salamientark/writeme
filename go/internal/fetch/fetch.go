@@ -8,11 +8,26 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/salamientark/writeme/internal/safety"
 )
+
+var ghUserCharRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+
+// validateGHUser mirrors state.ValidateGHUser to defend against direct callers.
+func validateGHUser(name string) error {
+	if name == "" || len(name) > 39 || !ghUserCharRe.MatchString(name) {
+		return fmt.Errorf("invalid GitHub username: %q", name)
+	}
+	if name[0] == '-' || name[len(name)-1] == '-' || strings.Contains(name, "--") {
+		return fmt.Errorf("invalid GitHub username: %q", name)
+	}
+	return nil
+}
 
 const (
 	HardLimit = 1000
@@ -117,6 +132,9 @@ func shellRun(ctx context.Context, user string, pageSize int, cursor string) ([]
 
 // ListRepos paginates until limit is reached or no more pages.
 func (f *GHFetcher) ListRepos(ctx context.Context, user string, limit int) ([]Repo, error) {
+	if err := validateGHUser(user); err != nil {
+		return nil, err
+	}
 	if limit > HardLimit {
 		fmt.Fprintf(f.Stderr, "Warning: limit %d exceeds maximum; capped at %d.\n", limit, HardLimit)
 		limit = HardLimit

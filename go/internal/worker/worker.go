@@ -1,4 +1,10 @@
-// Package worker is a bounded parallel work pool with FIFO results.
+// Package worker dispatches jobs with bounded work parallelism.
+//
+// Note: one goroutine is spawned per job at submission; only n run fn
+// concurrently (gated by a semaphore). Goroutine count therefore scales
+// with len(jobs), not n. Safe at the current HardLimit (1000) but not a
+// true fan-out pool — replace with a channel + fixed worker count if
+// callers ever exceed a few thousand jobs.
 package worker
 
 import (
@@ -23,9 +29,11 @@ type Result[J any, R any] struct {
 	Err   error
 }
 
-// Run dispatches jobs across n workers; emits Results in finish-order on the
-// returned channel. The channel closes when all jobs finish (including panics).
-// External ctx cancellation aborts in-flight workers; the chan still closes.
+// Run dispatches jobs and emits Results in finish-order on the returned
+// channel; at most n run fn concurrently. The channel closes when all jobs
+// finish (including panics). External ctx cancellation aborts in-flight
+// workers; the chan still closes. See package doc for goroutine-count
+// caveat.
 func Run[J any, R any](ctx context.Context, n int, jobs []J, fn func(context.Context, J) (R, error)) <-chan Result[J, R] {
 	if n < 1 {
 		n = 1

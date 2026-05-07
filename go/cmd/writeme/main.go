@@ -1,14 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/salamientark/writeme/internal/cli"
+	"github.com/salamientark/writeme/internal/commit"
 	"github.com/salamientark/writeme/internal/contributors"
 	"github.com/salamientark/writeme/internal/fetch"
 	"github.com/salamientark/writeme/internal/pipeline"
@@ -32,17 +37,14 @@ func run() int {
 	}
 
 	if cfg.Clean {
-		if cfg.ReposDir == "" {
-			return 0
-		}
 		fmt.Fprintf(os.Stderr, "Removing %s\n", cfg.ReposDir)
 		_ = os.RemoveAll(cfg.ReposDir)
 		return 0
 	}
 
-	user := cfg.GHUser
-	if user == "" {
-		fmt.Fprintln(os.Stderr, "ERROR: could not determine GitHub user. Set GH_USER or run 'gh auth login'.")
+	user, err := resolveUser(cfg.GHUser, os.Stdin, os.Stderr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 
@@ -58,7 +60,7 @@ func run() int {
 		return 1
 	}
 
-	release, err := safety.AcquireLock(stateDir + "/lock")
+	release, err := safety.AcquireLock(filepath.Join(stateDir, "lock"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Another writeme instance is running.")
 		return 1
@@ -67,6 +69,8 @@ func run() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	commit.WarnGPGSigning(ctx, ".", os.Stderr)
 
 	deps := pipeline.Deps{
 		Fetcher:      fetch.NewGHFetcher(os.Stderr),
@@ -92,6 +96,38 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+// resolveUser determines the GitHub user, querying `gh api user` when available
+// and prompting on mismatch with GH_USER. Mirrors Python _resolve_user.
+func resolveUser(envUser string, stdin *os.File, stderr *os.File) (string, error) {
+	ghLogin, ghErr := ghAPIUser()
+	switch {
+	case ghErr == nil && envUser == "":
+		return ghLogin, nil
+	case ghErr == nil && envUser == ghLogin:
+		return ghLogin, nil
+	case ghErr == nil && envUser != ghLogin:
+		fmt.Fprintf(stderr, "GH_USER=%q but `gh auth` user is %q. Use %q? [y/N] ", envUser, ghLogin, ghLogin)
+		r := bufio.NewReader(stdin)
+		line, _ := r.ReadString('\n')
+		if strings.EqualFold(strings.TrimSpace(line), "y") {
+			return ghLogin, nil
+		}
+		return envUser, nil
+	case envUser != "":
+		return envUser, nil
+	default:
+		return "", fmt.Errorf("could not determine GitHub user. Set GH_USER or run 'gh auth login'")
+	}
+}
+
+func ghAPIUser() (string, error) {
+	out, err := exec.Command("gh", "api", "user", "--jq", ".login").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func printSummary(store *state.Store) {

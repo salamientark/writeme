@@ -10,13 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/salamientark/writeme/internal/cli"
 	"github.com/salamientark/writeme/internal/commit"
 	"github.com/salamientark/writeme/internal/contributors"
 	"github.com/salamientark/writeme/internal/diff"
 	"github.com/salamientark/writeme/internal/fetch"
-	"github.com/salamientark/writeme/internal/filters"
 	"github.com/salamientark/writeme/internal/review"
 	"github.com/salamientark/writeme/internal/safety"
 	"github.com/salamientark/writeme/internal/sandbox"
@@ -37,10 +37,8 @@ type Deps struct {
 	User           string
 	StateDir       string
 	ContribWorkers int
+	Env            []string // nil → os.Environ()
 }
-
-// ErrNotImplemented kept for parent-package compatibility.
-var ErrNotImplemented = errors.New("pipeline.Run not implemented")
 
 // ErrUnpushedDirty signals exit code 2 (unpushed/dirty work in repos cache).
 var ErrUnpushedDirty = errors.New("unpushed or dirty work present")
@@ -58,6 +56,9 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 	}
 	if deps.Stdin == nil {
 		deps.Stdin = os.Stdin
+	}
+	if deps.Env == nil {
+		deps.Env = os.Environ()
 	}
 
 	if err := os.MkdirAll(cfg.ReposDir, 0o755); err != nil {
@@ -109,9 +110,8 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 		}
 	}
 
-	// Build filter Repo list for selection display.
-	displayRepos := convertForFilters(repos, contribByName)
-	_ = displayRepos // currently filters not yet wired into selection prompt
+	// TODO(phase4): wire filters into selection display via convertForFilters.
+	_ = contribByName
 
 	if len(repos) == 0 {
 		fmt.Fprintln(deps.Stdout, "Nothing selected.")
@@ -160,22 +160,34 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			return prepResult{Repo: j.repo, Err: err}, nil
 		}
 		defer jobSandbox.Cleanup()
-		env := review.ScrubEnv(os.Environ(), sandbox.EnvFor(jobSandbox))
-		gen, err := review.GenerateDraft(jobCtx, deps.Runner, repoDir, env)
+		env := review.ScrubEnv(deps.Env, sandbox.EnvFor(jobSandbox))
+		genCtx := jobCtx
+		if cfg.ClaudeTimeout > 0 {
+			var cancel context.CancelFunc
+			genCtx, cancel = context.WithTimeout(jobCtx, time.Duration(cfg.ClaudeTimeout)*time.Second)
+			defer cancel()
+		}
+		gen, err := review.GenerateDraft(genCtx, deps.Runner, repoDir, env)
 		return prepResult{Repo: j.repo, Generation: gen, Err: err}, nil
 	})
+
+	recordOrWarn := func(name, status string, opts state.RecordOpts) {
+		if err := store.Record(name, status, opts); err != nil {
+			fmt.Fprintf(deps.Stderr, "WARN: state record failed for %s: %v\n", name, err)
+		}
+	}
 
 	// Single consumer: review prompt + ship action per result.
 	for r := range resultsCh {
 		pr := r.Value
 		if r.Err != nil {
 			fmt.Fprintf(deps.Stderr, "ERROR %s: %v\n", pr.Repo.Name, r.Err)
-			_ = store.Record(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: r.Err.Error()})
+			recordOrWarn(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: r.Err.Error()})
 			continue
 		}
 		if pr.Err != nil {
 			fmt.Fprintf(deps.Stderr, "ERROR %s: %v\n", pr.Repo.Name, pr.Err)
-			_ = store.Record(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: pr.Err.Error()})
+			recordOrWarn(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: pr.Err.Error()})
 			continue
 		}
 		gen := pr.Generation
@@ -184,26 +196,32 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			if gen.Error != "" {
 				errMsg = string(gen.Status) + ": " + gen.Error
 			}
-			_ = store.Record(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: errMsg})
+			recordOrWarn(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: errMsg})
 			fmt.Fprintf(deps.Stderr, "FAILED %s: %s\n", pr.Repo.Name, errMsg)
 			continue
 		}
-		// Render diff + prompt.
 		repoDir := filepath.Join(cfg.ReposDir, pr.Repo.Name)
+		if len(gen.SecretMatches) > 0 {
+			fmt.Fprintf(deps.Stderr, "BLOCKED %s: secrets in generated README (%d match(es))\n", pr.Repo.Name, len(gen.SecretMatches))
+			recordOrWarn(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: "secret_in_generated_content"})
+			_ = safety.EnsureClean(ctx, repoDir)
+			continue
+		}
+		// Render diff + prompt.
 		text, _ := diff.Plain(ctx, repoDir)
 		fmt.Fprintf(deps.Stdout, "\n=== %s ===\n%s\n", pr.Repo.Name, text)
 		choice := promptReview(stdinReader, deps.Stdout)
 		if choice == "q" {
-			_ = store.Record(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{Error: "user_quit"})
+			recordOrWarn(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{Error: "user_quit"})
 			break
 		}
 		if choice == "d" {
-			_ = store.Record(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{})
+			recordOrWarn(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{})
 			_ = safety.EnsureClean(ctx, repoDir)
 			continue
 		}
 		if choice == "r" {
-			_ = store.Record(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{Error: "redo_unsupported_v1"})
+			recordOrWarn(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{Error: "redo_unsupported_v1"})
 			_ = safety.EnsureClean(ctx, repoDir)
 			continue
 		}
@@ -220,7 +238,7 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			CommitMessageOverride: cfg.CommitMessage,
 		})
 		opts := state.RecordOpts{Mode: out.Mode, PRURL: out.PRURL, Error: out.Error}
-		_ = store.Record(pr.Repo.Name, out.Status, opts)
+		recordOrWarn(pr.Repo.Name, out.Status, opts)
 	}
 
 	// Final unpushed scan.
@@ -241,24 +259,6 @@ func filterOutProcessed(repos []fetch.Repo, processed map[string]state.Record) [
 	for _, r := range repos {
 		if _, ok := processed[r.Name]; !ok {
 			out = append(out, r)
-		}
-	}
-	return out
-}
-
-func convertForFilters(repos []fetch.Repo, contribByName map[string][]string) []filters.Repo {
-	out := make([]filters.Repo, len(repos))
-	for i, r := range repos {
-		c, ok := contribByName[r.Name]
-		out[i] = filters.Repo{
-			Name:            r.Name,
-			SSHURL:          r.SSHURL,
-			PushedAt:        r.PushedAt,
-			HadReadmeBefore: r.HadReadmeBefore,
-			DiskUsage:       r.DiskUsage,
-			IsFork:          r.IsFork,
-			Contributors:    c,
-			HasContributors: ok,
 		}
 	}
 	return out
