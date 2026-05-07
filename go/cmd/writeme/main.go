@@ -9,7 +9,10 @@ import (
 	"syscall"
 
 	"github.com/salamientark/writeme/internal/cli"
+	"github.com/salamientark/writeme/internal/contributors"
+	"github.com/salamientark/writeme/internal/fetch"
 	"github.com/salamientark/writeme/internal/pipeline"
+	"github.com/salamientark/writeme/internal/review"
 	"github.com/salamientark/writeme/internal/safety"
 	"github.com/salamientark/writeme/internal/state"
 )
@@ -65,24 +68,30 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	_, runErr := pipeline.Run(ctx, cfg, store)
+	deps := pipeline.Deps{
+		Fetcher:      fetch.NewGHFetcher(os.Stderr),
+		ContribFetch: contributors.ShellFetch,
+		Runner:       review.ShellRunner{},
+		Stdin:        os.Stdin,
+		Stdout:       os.Stdout,
+		Stderr:       os.Stderr,
+		User:         user,
+		StateDir:     stateDir,
+	}
+	_, runErr := pipeline.Run(ctx, cfg, store, deps)
 	if errors.Is(ctx.Err(), context.Canceled) {
 		fmt.Fprintln(os.Stderr, "Interrupted. Flushing state...")
 		printSummary(store)
 		return 130
 	}
 	printSummary(store)
-	if runErr != nil && !errors.Is(runErr, pipeline.ErrNotImplemented) {
-		return mapErr(runErr)
-	}
-	return 0
-}
-
-func mapErr(err error) int {
-	if errors.Is(err, safety.ErrLocked) {
+	if runErr != nil {
+		if errors.Is(runErr, pipeline.ErrUnpushedDirty) {
+			return 2
+		}
 		return 1
 	}
-	return 1
+	return 0
 }
 
 func printSummary(store *state.Store) {
