@@ -6,7 +6,7 @@ set -euo pipefail
 NUKE_ON_FAIL="${NUKE_ON_FAIL:-0}"
 REPO_URL="${REPO_URL:-https://github.com/salamientark/writeme}"
 REF="${REF:-main}"
-EXPECTED_SHA="${EXPECTED_SHA:-0000000000000000000000000000000000000000}"
+EXPECTED_SHA="${EXPECTED_SHA:-9ac78883efcec2500ad172ce64e8dd78f24a65c2}"
 SKIP_DEP_CHECK="${SKIP_DEP_CHECK:-0}"
 
 # CRIT-1: validate REF — only allow safe git ref characters.
