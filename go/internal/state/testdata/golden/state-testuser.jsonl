@@ -1,0 +1,5 @@
+{"repo": "alpha-repo", "status": "pr_opened", "ts": "2026-01-15T12:00:00+00:00", "mode": "pr", "pr_url": "https://github.com/testuser/alpha-repo/pull/1"}
+{"repo": "beta-repo", "status": "pushed", "ts": "2026-01-15T12:00:00+00:00", "mode": "direct"}
+{"repo": "gamma-repo", "status": "commit_only", "ts": "2026-01-15T12:00:00+00:00", "mode": "commit_only"}
+{"repo": "delta-repo", "status": "skipped", "ts": "2026-01-15T12:00:00+00:00"}
+{"repo": "epsilon-repo", "status": "failed", "ts": "2026-01-15T12:00:00+00:00", "error": "claude timeout"}

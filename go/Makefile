@@ -28,5 +28,4 @@ clean:
 	rm -f $(BIN)
 
 golden-update:
-	@echo "TODO: re-record state JSONL + summary block from Python on synthetic fixture"
-	@false
+	cd .. && python3 go/testdata/capture_goldens.py
