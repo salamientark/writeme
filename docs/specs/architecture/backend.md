@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-06 | Files scanned: 9 | Token estimate: ~750 -->
+<!-- Generated: 2026-05-06 | Files scanned: 13 | Token estimate: ~900 -->
 
 # Core / "Backend" Modules
 
@@ -85,3 +85,35 @@ scan_text_for_secrets(s)        → list[str]   # AWS, GH token, OpenAI, PEM
 scan_repos(repos_dir) → list[UnpushedFinding]  # dirty or ahead-of-upstream
 ```
 Called at startup to warn before destructive cache reuse.
+
+## Filters — `src/filters.py` (57 lines)
+```
+is_solo(repo)       → bool   # single human contributor (after bot strip)
+is_fork(repo)       → bool
+has_readme(repo)    → bool
+apply_filters(repos, *, hide_solo, hide_forks, hide_with_readme) → list[Repo]
+```
+Predicates also wired live into `SelectionState` for in-TUI toggles.
+
+## Contributors — `src/contributors.py` (140 lines)
+```
+fetch_contributors(owner, name) → tuple[str, ...]   # gh REST /contributors
+is_bot(login) / strip_bots(logins)                  # heuristic bot filter
+cache_key(name, pushed_at) / load_cache / save_cache  # JSON cache, pushed_at-keyed
+enrich_repos(repos, *, cache_path, max_workers)     # ThreadPoolExecutor
+```
+
+## Sandbox — `src/sandbox.py` (37 lines)
+```
+sandbox_for(base, repo_name) → dict[str, Path]   # per-worker XDG paths
+sandbox_env(paths)            → dict[str, str]   # HOME / XDG_* env for subprocess
+```
+Isolates parallel `claude` invocations; no HOME pollution across workers.
+
+## WorkerPool — `src/worker.py` (87 lines)
+```
+class WorkerPool(max_workers)
+  submit(fn, *args, **kwargs) → Future
+  completed() → iterator       # tolerates cancelled futures
+```
+Bounded `ThreadPoolExecutor` wrapper; powers `_run_parallel` in entry script.
