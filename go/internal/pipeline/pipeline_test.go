@@ -35,7 +35,9 @@ func (f *fakeRunner) Run(ctx context.Context, repoDir string, env []string) (int
 	if f.fail {
 		return 1, "", nil
 	}
-	_ = os.WriteFile(filepath.Join(repoDir, "README.md"), []byte(f.body), 0o644)
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte(f.body), 0o644); err != nil {
+		return 1, "", err
+	}
 	return 0, "", nil
 }
 

@@ -45,6 +45,12 @@ func TestLoadCacheCorrupt(t *testing.T) {
 	if got := LoadCache(path); len(got) != 0 {
 		t.Error("missing should be empty")
 	}
+	if err := os.WriteFile(path, []byte("{not-json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadCache(path); len(got) != 0 {
+		t.Errorf("corrupt should be empty, got %v", got)
+	}
 }
 
 func TestEnrichFetchError(t *testing.T) {
@@ -60,7 +66,13 @@ func TestEnrichFetchError(t *testing.T) {
 
 func TestShellFetchMissingBinary(t *testing.T) {
 	t.Setenv("PATH", "")
-	_, _ = ShellFetch(context.Background(), "o", "r")
+	got, err := ShellFetch(context.Background(), "o", "r")
+	if err == nil {
+		t.Error("want err when gh binary missing")
+	}
+	if got != nil {
+		t.Errorf("got %v, want nil", got)
+	}
 }
 
 func TestShellFetchExitError(t *testing.T) {
@@ -193,8 +205,7 @@ func TestEnrich(t *testing.T) {
 	}
 	for _, r := range got2 {
 		if r.Repo.Name == "team" && len(r.Contributors) != 3 {
-			// cache stores raw fetched (already bot-stripped above).
-			t.Logf("team contribs=%v", r.Contributors)
+			t.Errorf("team contribs=%v, want 3 (raw fetch, no bot strip)", r.Contributors)
 		}
 	}
 }
