@@ -263,6 +263,165 @@ func TestPromptModeEOF(t *testing.T) {
 	}
 }
 
+func TestPipelineNilStore(t *testing.T) {
+	_, err := Run(context.Background(), cli.Config{}, nil, Deps{})
+	if err == nil {
+		t.Fatal("want err")
+	}
+}
+
+type errFetcher struct{}
+
+func (errFetcher) ListRepos(ctx context.Context, user string, limit int) ([]fetch.Repo, error) {
+	return nil, context.DeadlineExceeded
+}
+
+func TestPipelineListReposErr(t *testing.T) {
+	reposDir := filepath.Join(t.TempDir(), "repos")
+	stateDir := filepath.Join(t.TempDir(), "state")
+	store, _ := state.New("u", stateDir, state.FixedClock(time.Unix(0, 0).UTC()))
+	cfg := cli.Config{Parallel: 1, Limit: 10, ReposDir: reposDir}
+	deps := Deps{
+		Fetcher:      errFetcher{},
+		ContribFetch: func(ctx context.Context, _, _ string) ([]string, error) { return nil, nil },
+		Runner:       &fakeRunner{},
+		User:         "u",
+		Stdin:        strings.NewReader(""),
+		Stdout:       &bytes.Buffer{},
+		Stderr:       &bytes.Buffer{},
+	}
+	if _, err := Run(context.Background(), cfg, store, deps); err == nil {
+		t.Fatal("want err")
+	}
+}
+
+func TestPipelineEnrichErr(t *testing.T) {
+	reposDir := filepath.Join(t.TempDir(), "repos")
+	stateDir := filepath.Join(t.TempDir(), "state")
+	store, _ := state.New("u", stateDir, state.FixedClock(time.Unix(0, 0).UTC()))
+	cfg := cli.Config{Parallel: 1, Limit: 10, ReposDir: reposDir}
+	deps := Deps{
+		Fetcher:      &fakeFetcher{repos: []fetch.Repo{{Name: "x", PushedAt: "p"}}},
+		ContribFetch: func(ctx context.Context, _, _ string) ([]string, error) { return nil, context.DeadlineExceeded },
+		Runner:       &fakeRunner{},
+		User:         "u",
+		Stdin:        strings.NewReader(""),
+		Stdout:       &bytes.Buffer{},
+		Stderr:       &bytes.Buffer{},
+	}
+	if _, err := Run(context.Background(), cfg, store, deps); err == nil {
+		t.Fatal("want err")
+	}
+}
+
+func TestPipelineMkdirError(t *testing.T) {
+	tmp := t.TempDir()
+	blocker := filepath.Join(tmp, "blocker")
+	_ = os.WriteFile(blocker, []byte("x"), 0o644)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	store, _ := state.New("u", stateDir, state.FixedClock(time.Unix(0, 0).UTC()))
+	cfg := cli.Config{Parallel: 1, Limit: 10, ReposDir: filepath.Join(blocker, "sub")}
+	deps := Deps{
+		Fetcher:      &fakeFetcher{},
+		ContribFetch: func(ctx context.Context, _, _ string) ([]string, error) { return nil, nil },
+		Runner:       &fakeRunner{},
+		User:         "u",
+		Stdin:        strings.NewReader(""),
+		Stdout:       &bytes.Buffer{},
+		Stderr:       &bytes.Buffer{},
+	}
+	if _, err := Run(context.Background(), cfg, store, deps); err == nil {
+		t.Fatal("want err")
+	}
+}
+
+func TestPromptReviewEOF(t *testing.T) {
+	r := bufio.NewReader(strings.NewReader(""))
+	if got := promptReview(r, &bytes.Buffer{}); got != "q" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestPromptReviewAllChoices(t *testing.T) {
+	for _, in := range []string{"a\n", "r\n", "d\n", "q\n"} {
+		r := bufio.NewReader(strings.NewReader(in))
+		got := promptReview(r, &bytes.Buffer{})
+		if got != strings.TrimSpace(in) {
+			t.Errorf("in=%q got=%q", in, got)
+		}
+	}
+}
+
+func TestPipelineQuit(t *testing.T) {
+	bare := setupBareRemote(t, "demoq")
+	reposDir := filepath.Join(t.TempDir(), "repos")
+	stateDir := filepath.Join(t.TempDir(), "state")
+	store, _ := state.New("u", stateDir, state.FixedClock(time.Unix(0, 0).UTC()))
+	cfg := cli.Config{Parallel: 1, Limit: 10, ReposDir: reposDir, Mode: cli.ModeCommitOnly}
+	deps := Deps{
+		Fetcher:      &fakeFetcher{repos: []fetch.Repo{{Name: "demoq", SSHURL: bare}}},
+		ContribFetch: func(ctx context.Context, _, _ string) ([]string, error) { return nil, nil },
+		Runner:       &fakeRunner{body: "x\n"},
+		User:         "u",
+		Stdin:        strings.NewReader("a\nq\n"),
+		Stdout:       &bytes.Buffer{},
+		Stderr:       &bytes.Buffer{},
+	}
+	t.Setenv("GIT_AUTHOR_NAME", "t")
+	t.Setenv("GIT_AUTHOR_EMAIL", "t@t")
+	t.Setenv("GIT_COMMITTER_NAME", "t")
+	t.Setenv("GIT_COMMITTER_EMAIL", "t@t")
+	sum, _ := Run(context.Background(), cfg, store, deps)
+	if sum.Counts[state.StatusSkipped] != 1 {
+		t.Errorf("got %+v", sum.Counts)
+	}
+}
+
+func TestPipelineRedo(t *testing.T) {
+	bare := setupBareRemote(t, "demor")
+	reposDir := filepath.Join(t.TempDir(), "repos")
+	stateDir := filepath.Join(t.TempDir(), "state")
+	store, _ := state.New("u", stateDir, state.FixedClock(time.Unix(0, 0).UTC()))
+	cfg := cli.Config{Parallel: 1, Limit: 10, ReposDir: reposDir, Mode: cli.ModeCommitOnly}
+	deps := Deps{
+		Fetcher:      &fakeFetcher{repos: []fetch.Repo{{Name: "demor", SSHURL: bare}}},
+		ContribFetch: func(ctx context.Context, _, _ string) ([]string, error) { return nil, nil },
+		Runner:       &fakeRunner{body: "x\n"},
+		User:         "u",
+		Stdin:        strings.NewReader("a\nr\n"),
+		Stdout:       &bytes.Buffer{},
+		Stderr:       &bytes.Buffer{},
+	}
+	t.Setenv("GIT_AUTHOR_NAME", "t")
+	t.Setenv("GIT_AUTHOR_EMAIL", "t@t")
+	t.Setenv("GIT_COMMITTER_NAME", "t")
+	t.Setenv("GIT_COMMITTER_EMAIL", "t@t")
+	sum, _ := Run(context.Background(), cfg, store, deps)
+	if sum.Counts[state.StatusSkipped] != 1 {
+		t.Errorf("got %+v", sum.Counts)
+	}
+}
+
+func TestPipelineCloneError(t *testing.T) {
+	reposDir := filepath.Join(t.TempDir(), "repos")
+	stateDir := filepath.Join(t.TempDir(), "state")
+	store, _ := state.New("u", stateDir, state.FixedClock(time.Unix(0, 0).UTC()))
+	cfg := cli.Config{Parallel: 1, Limit: 10, ReposDir: reposDir, Mode: cli.ModeCommitOnly}
+	deps := Deps{
+		Fetcher:      &fakeFetcher{repos: []fetch.Repo{{Name: "nope", SSHURL: filepath.Join(t.TempDir(), "does-not-exist.git")}}},
+		ContribFetch: func(ctx context.Context, _, _ string) ([]string, error) { return nil, nil },
+		Runner:       &fakeRunner{},
+		User:         "u",
+		Stdin:        strings.NewReader("a\n"),
+		Stdout:       &bytes.Buffer{},
+		Stderr:       &bytes.Buffer{},
+	}
+	sum, _ := Run(context.Background(), cfg, store, deps)
+	if sum.Counts[state.StatusFailed] != 1 {
+		t.Errorf("got %+v", sum.Counts)
+	}
+}
+
 func TestPipelineEmptyRepoList(t *testing.T) {
 	reposDir := filepath.Join(t.TempDir(), "repos")
 	stateDir := filepath.Join(t.TempDir(), "state")

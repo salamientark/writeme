@@ -106,6 +106,47 @@ func TestSaveCacheBadDir(t *testing.T) {
 	}
 }
 
+func TestShellFetchBadJSON(t *testing.T) {
+	dir := t.TempDir()
+	gh := filepath.Join(dir, "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\nprintf 'not json'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	got, err := ShellFetch(context.Background(), "o", "r")
+	if err != nil {
+		t.Errorf("bad json should swallow: %v", err)
+	}
+	if got != nil {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestEnrichMaxWorkersZero(t *testing.T) {
+	fake := func(ctx context.Context, owner, name string) ([]string, error) { return []string{"u"}, nil }
+	repos := []Repo{{Name: "a", PushedAt: "p"}}
+	got, err := Enrich(context.Background(), "o", repos, filepath.Join(t.TempDir(), "c.json"), fake, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestEnrichSaveCacheError(t *testing.T) {
+	fake := func(ctx context.Context, owner, name string) ([]string, error) { return []string{"u"}, nil }
+	tmp := t.TempDir()
+	blocker := filepath.Join(tmp, "blocker")
+	_ = os.WriteFile(blocker, []byte("x"), 0o644)
+	cachePath := filepath.Join(blocker, "sub", "c.json")
+	repos := []Repo{{Name: "a", PushedAt: "p"}}
+	_, err := Enrich(context.Background(), "o", repos, cachePath, fake, 1)
+	if err == nil {
+		t.Fatal("want err")
+	}
+}
+
 func TestEnrichEmpty(t *testing.T) {
 	fake := func(ctx context.Context, owner, name string) ([]string, error) { return nil, nil }
 	got, err := Enrich(context.Background(), "o", nil, filepath.Join(t.TempDir(), "c.json"), fake, 1)
