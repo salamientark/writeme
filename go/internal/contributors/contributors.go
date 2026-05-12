@@ -59,15 +59,21 @@ func SaveCache(path string, cache map[string][]string) error {
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
-		os.Remove(tmpName)
+		if rmErr := os.Remove(tmpName); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			return fmt.Errorf("write temp cache: %w (cleanup temp file: %v)", err, rmErr)
+		}
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		if rmErr := os.Remove(tmpName); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			return fmt.Errorf("close temp cache: %w (cleanup temp file: %v)", err, rmErr)
+		}
 		return err
 	}
 	if err := os.Chmod(tmpName, 0o644); err != nil {
-		os.Remove(tmpName)
+		if rmErr := os.Remove(tmpName); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			return fmt.Errorf("chmod temp cache: %w (cleanup temp file: %v)", err, rmErr)
+		}
 		return err
 	}
 	return os.Rename(tmpName, path)
