@@ -146,7 +146,9 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 
 	sandboxBase := filepath.Join(cfg.ReposDir, ".sandbox")
 
-	resultsCh := worker.Run(ctx, cfg.Parallel, jobs, func(jobCtx context.Context, j job) (prepResult, error) {
+	jobsCtx, jobsCancel := context.WithCancel(ctx)
+	defer jobsCancel()
+	resultsCh := worker.Run(jobsCtx, cfg.Parallel, jobs, func(jobCtx context.Context, j job) (prepResult, error) {
 		repoDir := filepath.Join(cfg.ReposDir, j.repo.Name)
 		if err := commit.CloneOrFetch(jobCtx, j.repo.SSHURL, repoDir); err != nil {
 			return prepResult{Repo: j.repo, Err: fmt.Errorf("clone: %w", err)}, nil
@@ -196,8 +198,12 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 
 		// Render diff before prompting (FSM does not echo it itself).
 		if pr.Generation.Status == review.StatusReady {
-			text, _ := diff.Plain(ctx, repoDir)
-			fmt.Fprintf(deps.Stdout, "\n=== %s ===\n%s\n", pr.Repo.Name, text)
+			text, derr := diff.Plain(ctx, repoDir)
+			if derr != nil {
+				fmt.Fprintf(deps.Stderr, "WARN %s: render diff failed: %v\n", pr.Repo.Name, derr)
+			} else {
+				fmt.Fprintf(deps.Stdout, "\n=== %s ===\n%s\n", pr.Repo.Name, text)
+			}
 		}
 
 		gen := pr.Generation
@@ -232,6 +238,10 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 		switch res.Decision {
 		case review.DecisionQuit:
 			recordOrWarn(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{Error: res.Reason})
+			jobsCancel()
+			for range resultsCh {
+				// drain to let producers exit cleanly
+			}
 			goto done
 		case review.DecisionFailed:
 			recordOrWarn(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: res.Reason})

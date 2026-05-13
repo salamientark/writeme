@@ -69,6 +69,7 @@ func Loop(ctx context.Context, cfg SessionConfig) SessionResult {
 		oldContent = pre.OldContent
 	}
 
+	riskyChecked := false
 	// Pre-loop risky scan: derived from first GenerationResult.
 	if pre != nil && len(pre.RiskyFiles) > 0 {
 		choice, err := cfg.Prompter.RiskyFiles(ctx, pre.RiskyFiles)
@@ -76,8 +77,9 @@ func Loop(ctx context.Context, cfg SessionConfig) SessionResult {
 			return SessionResult{Decision: DecisionQuit, Reason: err.Error()}
 		}
 		if choice == "s" {
-			return SessionResult{Decision: DecisionSkipped, Reason: "risky_files_found"}
+			return clean("risky_files_found")
 		}
+		riskyChecked = true
 	}
 
 	for {
@@ -105,6 +107,17 @@ func Loop(ctx context.Context, cfg SessionConfig) SessionResult {
 				oldContent = gen.OldContent
 			}
 		}
+
+		if !riskyChecked && len(gen.RiskyFiles) > 0 {
+			choice, err := cfg.Prompter.RiskyFiles(ctx, gen.RiskyFiles)
+			if err != nil {
+				return SessionResult{Decision: DecisionQuit, Reason: err.Error()}
+			}
+			if choice == "s" {
+				return clean("risky_files_found")
+			}
+		}
+		riskyChecked = true
 
 		switch gen.Status {
 		case StatusTimeout:

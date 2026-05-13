@@ -59,11 +59,27 @@ func ScrubEnv(base []string, extra []string) []string {
 func StageSkill(basePath, repoDir string) (func(), error) {
 	cleanBase := filepath.Clean(basePath)
 	cleanRepo := filepath.Clean(repoDir)
-	rel, err := filepath.Rel(cleanBase, cleanRepo)
+	baseAbs, err := filepath.Abs(cleanBase)
+	if err != nil {
+		return func() {}, fmt.Errorf("resolve basePath: %w", err)
+	}
+	repoAbs, err := filepath.Abs(cleanRepo)
+	if err != nil {
+		return func() {}, fmt.Errorf("resolve repoDir: %w", err)
+	}
+	baseReal, err := filepath.EvalSymlinks(baseAbs)
+	if err != nil {
+		return func() {}, fmt.Errorf("resolve basePath symlinks: %w", err)
+	}
+	repoReal, err := filepath.EvalSymlinks(repoAbs)
+	if err != nil {
+		return func() {}, fmt.Errorf("resolve repoDir symlinks: %w", err)
+	}
+	rel, err := filepath.Rel(baseReal, repoReal)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return func() {}, fmt.Errorf("repoDir %q not under base %q", repoDir, basePath)
 	}
-	dst := filepath.Join(cleanRepo, ".claude", "skills", "create-readme", "SKILL.md")
+	dst := filepath.Join(repoReal, ".claude", "skills", "create-readme", "SKILL.md")
 	var prev []byte
 	hadPrev := false
 	if b, err := os.ReadFile(dst); err == nil {
@@ -85,9 +101,9 @@ func StageSkill(basePath, repoDir string) (func(), error) {
 		}
 		_ = os.Remove(dst)
 		// Drop only directories created by this call (Remove fails if non-empty).
-		_ = os.Remove(filepath.Join(cleanRepo, ".claude", "skills", "create-readme"))
-		_ = os.Remove(filepath.Join(cleanRepo, ".claude", "skills"))
-		_ = os.Remove(filepath.Join(cleanRepo, ".claude"))
+		_ = os.Remove(filepath.Join(repoReal, ".claude", "skills", "create-readme"))
+		_ = os.Remove(filepath.Join(repoReal, ".claude", "skills"))
+		_ = os.Remove(filepath.Join(repoReal, ".claude"))
 	}, nil
 }
 
