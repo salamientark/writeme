@@ -32,11 +32,12 @@ const (
 
 // reviewModel is the bubbletea Model for the review screen.
 type reviewModel struct {
-	ctx     ReviewContext
-	viewIdx int
-	offsets []int // per-view scroll offset
-	width   int
-	height  int
+	ctx      ReviewContext
+	viewIdx  int
+	decision ReviewDecision
+	offsets  []int // per-view scroll offset
+	width    int
+	height   int
 }
 
 var reviewViews = []string{"README", "diff_head", "diff_prev", "raw"}
@@ -54,7 +55,7 @@ func RunReview(ctx ReviewContext) ReviewDecision {
 		ctx:     ctx,
 		offsets: make([]int, len(reviewViews)),
 	}
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	final, err := p.Run()
 	if err != nil {
 		return ReviewQuit
@@ -81,13 +82,13 @@ func (m *reviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "a":
-			m.viewIdx = -1 // sentinel for accept
+			m.decision = ReviewAccept
 			return m, tea.Quit
 		case "r":
-			m.viewIdx = -2 // sentinel for redo
+			m.decision = ReviewRedo
 			return m, tea.Quit
 		case "d":
-			m.viewIdx = -3 // sentinel for discard
+			m.decision = ReviewDiscard
 			return m, tea.Quit
 
 		case "tab":
@@ -240,7 +241,7 @@ func (m *reviewModel) View() string {
 	// Footer.
 	viewLabel := reviewViewLabels[view]
 	scrollPos := fmt.Sprintf("lines %d-%d/%d", offset+1, end, total)
-	if total == 0 {
+	if content == "" {
 		scrollPos = "empty"
 	}
 	footer := fmt.Sprintf(
@@ -254,14 +255,8 @@ func (m *reviewModel) View() string {
 
 // Result returns the final decision from the review model.
 func (m *reviewModel) Result() ReviewDecision {
-	switch m.viewIdx {
-	case -1:
-		return ReviewAccept
-	case -2:
-		return ReviewRedo
-	case -3:
-		return ReviewDiscard
-	default:
-		return ReviewQuit
+	if m.decision != "" {
+		return m.decision
 	}
+	return ReviewQuit
 }

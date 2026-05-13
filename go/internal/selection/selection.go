@@ -354,9 +354,6 @@ func (s *SelectionState) VisibleIndices() []int {
 
 // HiddenSelectedCount returns the count of selected repos not in current visible_indices.
 func (s *SelectionState) HiddenSelectedCount() int {
-	if s.Filter == "" {
-		return 0
-	}
 	visible := make(map[int]bool, len(s.VisibleIndices()))
 	for _, i := range s.VisibleIndices() {
 		visible[i] = true
@@ -372,16 +369,17 @@ func (s *SelectionState) HiddenSelectedCount() int {
 
 // VisibleSlice returns the rows that should be rendered in the current viewport.
 func (s *SelectionState) VisibleSlice() []VisibleRow {
+	visible := s.VisibleIndices()
 	start := s.ViewportStart
-	end := start + s.ViewportHeight
-	if end > len(s.Repos) {
-		end = len(s.Repos)
+	if start > len(visible) {
+		start = len(visible)
 	}
-	if start > len(s.Repos) {
-		start = len(s.Repos)
+	end := start + s.ViewportHeight
+	if end > len(visible) {
+		end = len(visible)
 	}
 	result := make([]VisibleRow, 0, end-start)
-	for i := start; i < end; i++ {
+	for _, i := range visible[start:end] {
 		result = append(result, VisibleRow{
 			Repo:       s.Repos[i],
 			IsSelected: s.Selected[i],

@@ -125,7 +125,7 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 
 	// Selection: TUI when available and not overridden.
 	var pickedRepos []selection.Repo
-	if !cfg.Plain && isTerminal(deps.Stdout) {
+	if !cfg.Plain && isTerminal(deps.Stdout) && isTerminalReader(deps.Stdin) {
 		result := ui.RunSelection(selRepos)
 		if result.Quit || len(result.Repos) == 0 {
 			fmt.Fprintln(deps.Stdout, "Nothing selected.")
@@ -206,10 +206,12 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 	}
 
 	basePrompter := review.NewStdinPrompter(stdinReader, deps.Stdout)
-	useTUI := !cfg.Plain && isTerminal(deps.Stdout)
+	useTUI := !cfg.Plain && isTerminal(deps.Stdout) && isTerminalReader(deps.Stdin)
 	cleaner := func(c context.Context, dir string) error { return safety.EnsureClean(c, dir) }
 
 	// Single consumer: review FSM + ship action per result.
+	totalRepos := len(pickedRepos)
+	repoIdx := 0
 	for r := range resultsCh {
 		pr := r.Value
 		if r.Err != nil {
@@ -222,6 +224,7 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			recordOrWarn(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: pr.Err.Error()})
 			continue
 		}
+		repoIdx++
 		repoDir := filepath.Join(cfg.ReposDir, pr.Repo.Name)
 
 		// Render diff before prompting (FSM does not echo it itself).
@@ -256,7 +259,7 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 		// Choose prompter: TUI for accept screen when available.
 		var loopPrompter review.Prompter = basePrompter
 		if useTUI && gen.Status == review.StatusReady {
-			loopPrompter = NewTUIPrompter(basePrompter, pr.Repo.Name, 1, 1)
+			loopPrompter = NewTUIPrompter(basePrompter, pr.Repo.Name, repoIdx, totalRepos)
 		}
 
 		res := review.Loop(ctx, review.SessionConfig{
@@ -347,6 +350,15 @@ func convertToSelectionRepos(repos []fetch.Repo, contribByName map[string][]stri
 // isTerminal reports whether w is a terminal.
 func isTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
+}
+
+// isTerminalReader reports whether r is a terminal.
+func isTerminalReader(r io.Reader) bool {
+	f, ok := r.(*os.File)
 	if !ok {
 		return false
 	}

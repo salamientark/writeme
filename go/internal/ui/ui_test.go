@@ -96,20 +96,19 @@ func TestReviewModelRenderViewNilHead(t *testing.T) {
 
 func TestReviewModelResult(t *testing.T) {
 	tests := []struct {
-		idx  int
-		want ReviewDecision
+		decision ReviewDecision
+		want     ReviewDecision
 	}{
-		{-1, ReviewAccept},
-		{-2, ReviewRedo},
-		{-3, ReviewDiscard},
-		{0, ReviewQuit},
-		{3, ReviewQuit},
+		{ReviewAccept, ReviewAccept},
+		{ReviewRedo, ReviewRedo},
+		{ReviewDiscard, ReviewDiscard},
+		{"", ReviewQuit},
 	}
 	for _, tt := range tests {
-		m := &reviewModel{viewIdx: tt.idx, offsets: make([]int, len(reviewViews))}
+		m := &reviewModel{decision: tt.decision, offsets: make([]int, len(reviewViews))}
 		got := m.Result()
 		if got != tt.want {
-			t.Errorf("Result() with viewIdx=%d = %q, want %q", tt.idx, got, tt.want)
+			t.Errorf("Result() with decision=%q = %q, want %q", tt.decision, got, tt.want)
 		}
 	}
 }
@@ -592,26 +591,26 @@ func TestReviewModelUpdateDecisionKeys(t *testing.T) {
 	ctx := ReviewContext{RepoName: "r", Index: 1, Total: 1, CurrentDraft: "d"}
 	m := &reviewModel{ctx: ctx, offsets: make([]int, len(reviewViews))}
 
-	// a → accept (viewIdx = -1)
+	// a → accept
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd == nil {
 		t.Error("a should return tea.Quit")
 	}
-	if m.viewIdx != -1 {
-		t.Errorf("viewIdx after a = %d, want -1", m.viewIdx)
+	if m.decision != ReviewAccept {
+		t.Errorf("decision after a = %q, want %q", m.decision, ReviewAccept)
 	}
 	if m.Result() != ReviewAccept {
 		t.Error("should be accept")
 	}
 
-	// r → redo (viewIdx = -2)
+	// r → redo
 	m2 := &reviewModel{ctx: ctx, offsets: make([]int, len(reviewViews))}
 	m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if m2.Result() != ReviewRedo {
 		t.Error("should be redo")
 	}
 
-	// d → discard (viewIdx = -3)
+	// d → discard
 	m3 := &reviewModel{ctx: ctx, offsets: make([]int, len(reviewViews))}
 	m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	if m3.Result() != ReviewDiscard {
@@ -624,7 +623,7 @@ func TestReviewModelUpdateDecisionKeys(t *testing.T) {
 	if cmd4 == nil {
 		t.Error("q should return tea.Quit")
 	}
-	// viewIdx stays 0, so Result() returns ReviewQuit
+	// decision stays "", so Result() returns ReviewQuit
 	if m4.Result() != ReviewQuit {
 		t.Error("should be quit")
 	}

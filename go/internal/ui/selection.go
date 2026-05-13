@@ -31,7 +31,7 @@ func RunSelection(repos []selection.Repo) SelectionResult {
 	m := &selectionModel{
 		state: selection.NewSelectionState(repos, 0, nil, 0, 15),
 	}
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	final, err := p.Run()
 	if err != nil {
 		return SelectionResult{Quit: true}
