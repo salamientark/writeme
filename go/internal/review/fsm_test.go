@@ -13,7 +13,6 @@ type fakePrompter struct {
 	nonzero       []string // "r"|"d"
 	secret        []bool   // true ⇒ override
 	accept        []string // "a"|"r"|"d"|"q"|"v"|"V"|"o" — "v"/"V"/"o" loop
-	mode          []string // p|m|c|n
 	calls         []string
 	acceptCtxSnap []acceptSnap
 }
