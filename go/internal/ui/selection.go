@@ -78,6 +78,8 @@ func (m *selectionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *selectionModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
 	case "esc":
 		m.filterMode = false
 		return m, nil
