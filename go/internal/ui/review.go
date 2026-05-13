@@ -33,14 +33,14 @@ const (
 
 // reviewModel is the bubbletea Model for the review screen.
 type reviewModel struct {
-	ctx        ReviewContext
-	viewIdx    int
-	decision   ReviewDecision
-	offsets    []int // per-view scroll offset
-	width      int
-	height     int
+	ctx         ReviewContext
+	viewIdx     int
+	decision    ReviewDecision
+	offsets     []int // per-view scroll offset
+	width       int
+	height      int
 	renderCache map[string]string
-	cacheWidth int
+	cacheWidth  int
 }
 
 func renderMarkdown(src string, width int) string {
