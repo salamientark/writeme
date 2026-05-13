@@ -734,6 +734,135 @@ func TestSelectionModelViewHiddenSelected(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdown(t *testing.T) {
+	tests := []struct {
+		name  string
+		src   string
+		width int
+	}{
+		{"narrow clamps to 80", "# Hello\n\nbody text", 5},
+		{"normal width", "# Title\n\nparagraph", 80},
+		{"empty input", "", 80},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := renderMarkdown(tt.src, tt.width)
+			// Non-empty input should produce non-empty output.
+			if tt.src != "" && got == "" {
+				t.Errorf("renderMarkdown(%q, %d) returned empty", tt.src, tt.width)
+			}
+			// Output must not have trailing newline (TrimRight'd).
+			if strings.HasSuffix(got, "\n") {
+				t.Error("output should not end with newline")
+			}
+		})
+	}
+}
+
+func TestColorizeDiff(t *testing.T) {
+	src := "--- a\n+++ b\n@@ -1,1 +1,1 @@\n-old line\n+new line\n context line"
+	got := colorizeDiff(src)
+	if got == "" {
+		t.Fatal("colorizeDiff returned empty")
+	}
+	if !strings.Contains(got, "old line") {
+		t.Error("output should contain deleted line text")
+	}
+	if !strings.Contains(got, "new line") {
+		t.Error("output should contain added line text")
+	}
+	if !strings.Contains(got, "context line") {
+		t.Error("output should contain context line text")
+	}
+	if !strings.Contains(got, "@@") {
+		t.Error("output should contain hunk marker")
+	}
+	if strings.HasSuffix(got, "\n") {
+		t.Error("output should not end with newline")
+	}
+}
+
+func TestColorizeDiffEmpty(t *testing.T) {
+	got := colorizeDiff("")
+	if got != "" {
+		t.Errorf("colorizeDiff(\"\") = %q, want empty", got)
+	}
+}
+
+func TestRenderViewWithWidthCaches(t *testing.T) {
+	head := "# Old\n"
+	prev := "# Prev\n"
+	ctx := ReviewContext{
+		RepoName:     "r",
+		Index:        1,
+		Total:        1,
+		HeadReadme:   &head,
+		PrevDraft:    &prev,
+		CurrentDraft: "# New README\n\nbody",
+	}
+	m := &reviewModel{
+		ctx:     ctx,
+		offsets: make([]int, len(reviewViews)),
+		width:   80,
+		height:  24,
+	}
+
+	// First call populates cache for each view.
+	first := m.renderView("README")
+	if first == "" {
+		t.Fatal("rendered README empty")
+	}
+	if _, ok := m.renderCache["README"]; !ok {
+		t.Error("README should be cached")
+	}
+
+	// Second call hits the cache (same result).
+	second := m.renderView("README")
+	if first != second {
+		t.Error("cached render should be stable")
+	}
+
+	// diff_head/diff_prev/raw all populate cache.
+	m.renderView("diff_head")
+	m.renderView("diff_prev")
+	m.renderView("raw")
+	for _, v := range []string{"diff_head", "diff_prev", "raw"} {
+		if _, ok := m.renderCache[v]; !ok {
+			t.Errorf("%s not cached", v)
+		}
+	}
+
+	// Width change invalidates cache.
+	m.width = 120
+	m.renderView("README")
+	if m.cacheWidth != 120-4 {
+		t.Errorf("cacheWidth = %d, want %d", m.cacheWidth, 120-4)
+	}
+}
+
+func TestRenderViewTinyWidthClamps(t *testing.T) {
+	ctx := ReviewContext{
+		RepoName:     "r",
+		Index:        1,
+		Total:        1,
+		CurrentDraft: "# X",
+	}
+	// width=10 → contentWidth=6 → clamped to 80 inside renderView
+	m := &reviewModel{
+		ctx:     ctx,
+		offsets: make([]int, len(reviewViews)),
+		width:   10,
+		height:  24,
+	}
+	got := m.renderView("README")
+	if got == "" {
+		t.Error("renderView should not be empty for tiny width")
+	}
+	if m.cacheWidth != 80 {
+		t.Errorf("cacheWidth = %d, want 80 (clamped)", m.cacheWidth)
+	}
+}
+
 func TestSelectionResultTypes(t *testing.T) {
 	r := SelectionResult{Quit: true}
 	if !r.Quit {
