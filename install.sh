@@ -97,6 +97,10 @@ export GH_README_REPOS_DIR="$WORKDIR/repo"
 export XDG_STATE_HOME="$WORKDIR/state"
 export XDG_CACHE_HOME="$WORKDIR/cache"
 
+if [[ -t 1 ]]; then
+  clear
+fi
+
 set +e
 if [[ ! -t 0 ]] && (exec </dev/tty) 2>/dev/null; then
   uv run --script "$WORKDIR/program/gh_readme_pipeline.py" "$@" < /dev/tty

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/salamientark/writeme/internal/diff"
@@ -32,12 +33,56 @@ const (
 
 // reviewModel is the bubbletea Model for the review screen.
 type reviewModel struct {
-	ctx      ReviewContext
-	viewIdx  int
-	decision ReviewDecision
-	offsets  []int // per-view scroll offset
-	width    int
-	height   int
+	ctx        ReviewContext
+	viewIdx    int
+	decision   ReviewDecision
+	offsets    []int // per-view scroll offset
+	width      int
+	height     int
+	renderCache map[string]string
+	cacheWidth int
+}
+
+func renderMarkdown(src string, width int) string {
+	if width < 20 {
+		width = 80
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return src
+	}
+	out, err := r.Render(src)
+	if err != nil {
+		return src
+	}
+	return strings.TrimRight(out, "\n")
+}
+
+func colorizeDiff(src string) string {
+	addStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	delStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	hunkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
+	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	var b strings.Builder
+	for _, line := range strings.Split(src, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"):
+			b.WriteString(metaStyle.Render(line))
+		case strings.HasPrefix(line, "@@"):
+			b.WriteString(hunkStyle.Render(line))
+		case strings.HasPrefix(line, "+"):
+			b.WriteString(addStyle.Render(line))
+		case strings.HasPrefix(line, "-"):
+			b.WriteString(delStyle.Render(line))
+		default:
+			b.WriteString(line)
+		}
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 var reviewViews = []string{"README", "diff_head", "diff_prev", "raw"}
@@ -177,18 +222,42 @@ func (m *reviewModel) lineCount(view string) int {
 }
 
 func (m *reviewModel) renderView(view string) string {
-	switch view {
-	case "README":
-		return m.ctx.CurrentDraft
-	case "diff_head":
-		return diff.DiffVsHead(m.ctx.HeadReadme, m.ctx.CurrentDraft)
-	case "diff_prev":
-		return diff.DiffVsPrev(m.ctx.PrevDraft, m.ctx.CurrentDraft)
-	case "raw":
-		return m.ctx.CurrentDraft
-	default:
+	// Before first WindowSizeMsg, return plain content (tests rely on this).
+	if m.width == 0 {
+		switch view {
+		case "README", "raw":
+			return m.ctx.CurrentDraft
+		case "diff_head":
+			return diff.DiffVsHead(m.ctx.HeadReadme, m.ctx.CurrentDraft)
+		case "diff_prev":
+			return diff.DiffVsPrev(m.ctx.PrevDraft, m.ctx.CurrentDraft)
+		}
 		return ""
 	}
+	contentWidth := m.width - 4
+	if contentWidth < 20 {
+		contentWidth = 80
+	}
+	if m.renderCache == nil || m.cacheWidth != contentWidth {
+		m.renderCache = make(map[string]string)
+		m.cacheWidth = contentWidth
+	}
+	if cached, ok := m.renderCache[view]; ok {
+		return cached
+	}
+	var out string
+	switch view {
+	case "README":
+		out = renderMarkdown(m.ctx.CurrentDraft, contentWidth)
+	case "diff_head":
+		out = colorizeDiff(diff.DiffVsHead(m.ctx.HeadReadme, m.ctx.CurrentDraft))
+	case "diff_prev":
+		out = colorizeDiff(diff.DiffVsPrev(m.ctx.PrevDraft, m.ctx.CurrentDraft))
+	case "raw":
+		out = m.ctx.CurrentDraft
+	}
+	m.renderCache[view] = out
+	return out
 }
 
 // View renders the review screen.
@@ -200,9 +269,8 @@ func (m *reviewModel) View() string {
 	view := reviewViews[m.viewIdx]
 	content := m.renderView(view)
 
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")).Padding(0, 1).Background(lipgloss.Color("236"))
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	bodyStyle := lipgloss.NewStyle().Width(m.width - 4)
 
 	vp := m.viewport()
 	allLines := strings.Split(content, "\n")
@@ -230,7 +298,7 @@ func (m *reviewModel) View() string {
 
 	// Body.
 	for _, line := range window {
-		fmt.Fprintln(&b, bodyStyle.Render(line))
+		fmt.Fprintln(&b, line)
 	}
 
 	// Fill remaining viewport space.

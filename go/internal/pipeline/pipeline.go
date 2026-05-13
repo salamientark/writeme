@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -173,18 +174,50 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 
 	sandboxBase := filepath.Join(cfg.ReposDir, ".sandbox")
 
+	// Serialized progress printer (workers run in parallel).
+	var progMu sync.Mutex
+	var started, finished int
+	totalJobs := len(jobs)
+	progress := func(format string, a ...any) {
+		progMu.Lock()
+		defer progMu.Unlock()
+		fmt.Fprintf(deps.Stderr, format, a...)
+	}
+	fmt.Fprintf(deps.Stderr, "\nGenerating READMEs (%d repos, parallel=%d) — Claude working...\n", totalJobs, cfg.Parallel)
+
 	jobsCtx, jobsCancel := context.WithCancel(ctx)
 	defer jobsCancel()
 	resultsCh := worker.Run(jobsCtx, cfg.Parallel, jobs, func(jobCtx context.Context, j job) (prepResult, error) {
+		progMu.Lock()
+		started++
+		idx := started
+		progMu.Unlock()
+		progress("  [%d/%d] ⏳ %s — generating...\n", idx, totalJobs, j.repo.Name)
+		start := time.Now()
 		repoDir := filepath.Join(cfg.ReposDir, j.repo.Name)
 		if err := commit.CloneOrFetch(jobCtx, j.repo.SSHURL, repoDir); err != nil {
+			progMu.Lock()
+			finished++
+			done := finished
+			progMu.Unlock()
+			progress("  [%d/%d] ✗ %s — clone failed (%v)\n", done, totalJobs, j.repo.Name, time.Since(start).Round(time.Second))
 			return prepResult{Repo: j.repo, Err: fmt.Errorf("clone: %w", err)}, nil
 		}
 		if err := safety.EnsureClean(jobCtx, repoDir); err != nil {
+			progMu.Lock()
+			finished++
+			done := finished
+			progMu.Unlock()
+			progress("  [%d/%d] ✗ %s — dirty repo (%v)\n", done, totalJobs, j.repo.Name, time.Since(start).Round(time.Second))
 			return prepResult{Repo: j.repo, Err: err}, nil
 		}
 		jobSandbox, err := sandbox.JobSandbox(sandboxBase, j.repo.Name)
 		if err != nil {
+			progMu.Lock()
+			finished++
+			done := finished
+			progMu.Unlock()
+			progress("  [%d/%d] ✗ %s — sandbox err (%v)\n", done, totalJobs, j.repo.Name, time.Since(start).Round(time.Second))
 			return prepResult{Repo: j.repo, Err: err}, nil
 		}
 		defer jobSandbox.Cleanup()
@@ -196,6 +229,18 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			defer cancel()
 		}
 		gen, err := review.GenerateDraft(genCtx, deps.Runner, cfg.ReposDir, repoDir, env)
+		progMu.Lock()
+		finished++
+		done := finished
+		progMu.Unlock()
+		mark := "✓"
+		status := "ready"
+		if err != nil {
+			mark, status = "✗", "error"
+		} else if gen.Status != review.StatusReady {
+			mark, status = "⚠", string(gen.Status)
+		}
+		progress("  [%d/%d] %s %s — %s (%v)\n", done, totalJobs, mark, j.repo.Name, status, time.Since(start).Round(time.Second))
 		return prepResult{Repo: j.repo, Generation: gen, Err: err}, nil
 	})
 
@@ -233,7 +278,7 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			if derr != nil {
 				fmt.Fprintf(deps.Stderr, "WARN %s: render diff failed: %v\n", pr.Repo.Name, derr)
 			} else {
-				fmt.Fprintf(deps.Stdout, "\n=== %s ===\n%s\n", pr.Repo.Name, text)
+				fmt.Fprintf(deps.Stdout, "\n──────── [%d/%d] %s ────────\n%s\n", repoIdx, totalRepos, pr.Repo.Name, text)
 			}
 		}
 
