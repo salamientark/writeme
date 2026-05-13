@@ -15,6 +15,7 @@ import (
 	"github.com/salamientark/writeme/internal/fetch"
 	"github.com/salamientark/writeme/internal/review"
 	"github.com/salamientark/writeme/internal/state"
+	"github.com/salamientark/writeme/internal/ui"
 )
 
 // fakeFetcher serves a fixed list.
@@ -381,6 +382,198 @@ func TestPipelineCloneError(t *testing.T) {
 	sum, _ := Run(context.Background(), cfg, store, deps)
 	if sum.Counts[state.StatusFailed] != 1 {
 		t.Errorf("got %+v", sum.Counts)
+	}
+}
+
+// fakePrompterForTUI is a minimal Prompter for testing tuiPrompter delegation.
+type fakePrompterForTUI struct {
+	riskyRet   string
+	timeoutRet string
+	nonzeroRet string
+	secretRet  bool
+	acceptRet  string
+
+	riskyCalled   bool
+	timeoutCalled bool
+	nonzeroCalled bool
+	secretCalled  bool
+	acceptCalled  bool
+}
+
+func (f *fakePrompterForTUI) Accept(ctx context.Context, hadReadme bool, old, newC string) (string, error) {
+	f.acceptCalled = true
+	return f.acceptRet, nil
+}
+
+func (f *fakePrompterForTUI) RiskyFiles(ctx context.Context, risky []string) (string, error) {
+	f.riskyCalled = true
+	return f.riskyRet, nil
+}
+func (f *fakePrompterForTUI) Timeout(ctx context.Context) (string, error) {
+	f.timeoutCalled = true
+	return f.timeoutRet, nil
+}
+func (f *fakePrompterForTUI) Nonzero(ctx context.Context) (string, error) {
+	f.nonzeroCalled = true
+	return f.nonzeroRet, nil
+}
+func (f *fakePrompterForTUI) SecretOverride(ctx context.Context, matches []string) (bool, error) {
+	f.secretCalled = true
+	return f.secretRet, nil
+}
+func TestNewTUIPrompter(t *testing.T) {
+	inner := &fakePrompterForTUI{}
+	p := NewTUIPrompter(inner, "my-repo", 3, 10)
+	tp, ok := p.(*tuiPrompter)
+	if !ok {
+		t.Fatal("NewTUIPrompter should return *tuiPrompter")
+	}
+	if tp.repoName != "my-repo" {
+		t.Errorf("repoName = %q", tp.repoName)
+	}
+	if tp.index != 3 {
+		t.Errorf("index = %d", tp.index)
+	}
+	if tp.total != 10 {
+		t.Errorf("total = %d", tp.total)
+	}
+}
+
+func TestTUIPrompterRiskyFiles(t *testing.T) {
+	inner := &fakePrompterForTUI{riskyRet: "c"}
+	p := NewTUIPrompter(inner, "r", 0, 0)
+	v, err := p.RiskyFiles(context.Background(), []string{"file.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "c" {
+		t.Errorf("RiskyFiles = %q, want 'c'", v)
+	}
+	if !inner.riskyCalled {
+		t.Error("inner.RiskyFiles was not called")
+	}
+}
+
+func TestTUIPrompterTimeout(t *testing.T) {
+	inner := &fakePrompterForTUI{timeoutRet: "s"}
+	p := NewTUIPrompter(inner, "r", 0, 0)
+	v, err := p.Timeout(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "s" {
+		t.Errorf("Timeout = %q, want 's'", v)
+	}
+	if !inner.timeoutCalled {
+		t.Error("inner.Timeout was not called")
+	}
+}
+
+func TestTUIPrompterNonzero(t *testing.T) {
+	inner := &fakePrompterForTUI{nonzeroRet: "d"}
+	p := NewTUIPrompter(inner, "r", 0, 0)
+	v, err := p.Nonzero(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "d" {
+		t.Errorf("Nonzero = %q, want 'd'", v)
+	}
+	if !inner.nonzeroCalled {
+		t.Error("inner.Nonzero was not called")
+	}
+}
+
+func TestTUIPrompterSecretOverride(t *testing.T) {
+	inner := &fakePrompterForTUI{secretRet: true}
+	p := NewTUIPrompter(inner, "r", 0, 0)
+	v, err := p.SecretOverride(context.Background(), []string{"SECRET"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v {
+		t.Error("SecretOverride = false, want true")
+	}
+	if !inner.secretCalled {
+		t.Error("inner.SecretOverride was not called")
+	}
+}
+
+func TestTUIPrompterAccept(t *testing.T) {
+	inner := &fakePrompterForTUI{acceptRet: "a"}
+	p := NewTUIPrompter(inner, "test-repo", 2, 7)
+	tp := p.(*tuiPrompter)
+
+	// Inject a fake review runner that returns each decision.
+	tests := []struct {
+		decision ui.ReviewDecision
+		want     string
+	}{
+		{ui.ReviewAccept, "a"},
+		{ui.ReviewRedo, "r"},
+		{ui.ReviewDiscard, "d"},
+		{ui.ReviewQuit, "q"},
+		{ui.ReviewDecision("unknown"), "q"},
+	}
+	for _, tt := range tests {
+		tp.runReview = func(ctx ui.ReviewContext) ui.ReviewDecision {
+			if ctx.RepoName != "test-repo" {
+				t.Errorf("RepoName = %q", ctx.RepoName)
+			}
+			if ctx.Index != 2 {
+				t.Errorf("Index = %d", ctx.Index)
+			}
+			if ctx.Total != 7 {
+				t.Errorf("Total = %d", ctx.Total)
+			}
+			if ctx.CurrentDraft != "new-readme" {
+				t.Errorf("CurrentDraft = %q", ctx.CurrentDraft)
+			}
+			return tt.decision
+		}
+		got, err := tp.Accept(context.Background(), false, "", "new-readme")
+		if err != nil {
+			t.Fatalf("Accept(%s): %v", tt.decision, err)
+		}
+		if got != tt.want {
+			t.Errorf("Accept() with decision=%s = %q, want %q", tt.decision, got, tt.want)
+		}
+	}
+}
+
+func TestTUIPrompterAcceptWithHeadReadme(t *testing.T) {
+	inner := &fakePrompterForTUI{acceptRet: "a"}
+	p := NewTUIPrompter(inner, "r", 0, 0)
+	tp := p.(*tuiPrompter)
+
+	tp.runReview = func(ctx ui.ReviewContext) ui.ReviewDecision {
+		if ctx.HeadReadme == nil {
+			t.Error("HeadReadme should not be nil when hadReadme=true")
+		} else if *ctx.HeadReadme != "old-content" {
+			t.Errorf("HeadReadme = %q", *ctx.HeadReadme)
+		}
+		return ui.ReviewAccept
+	}
+	got, err := tp.Accept(context.Background(), true, "old-content", "new-content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "a" {
+		t.Errorf("Accept = %q, want 'a'", got)
+	}
+}
+
+func TestIsTerminalOnRealFile(t *testing.T) {
+	// os.Stderr is always an *os.File. We cover the branch that calls term.IsTerminal.
+	// In test runners this usually isn't a TTY, but we just care about code coverage.
+	_ = isTerminal(os.Stderr)
+}
+
+func TestIsTerminalOnNonFile(t *testing.T) {
+	// bytes.Buffer is not an *os.File, so isTerminal should return false.
+	var buf bytes.Buffer
+	if isTerminal(&buf) {
+		t.Error("isTerminal on bytes.Buffer should return false")
 	}
 }
 

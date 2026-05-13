@@ -7,18 +7,22 @@ import (
 	"github.com/salamientark/writeme/internal/ui"
 )
 
+// runReviewFn is the signature of the function that launches the review TUI.
+type runReviewFn func(ui.ReviewContext) ui.ReviewDecision
+
 // tuiPrompter wraps a Prompter, delegating the Accept prompt to the TUI review screen.
 type tuiPrompter struct {
-	inner    review.Prompter
-	repoName string
-	index    int
-	total    int
-	old      string
+	inner     review.Prompter
+	repoName  string
+	index     int
+	total     int
+	old       string
+	runReview runReviewFn
 }
 
 // NewTUIPrompter creates a Prompter that uses the TUI for the Accept step.
 func NewTUIPrompter(inner review.Prompter, repoName string, index, total int) review.Prompter {
-	return &tuiPrompter{inner: inner, repoName: repoName, index: index, total: total}
+	return &tuiPrompter{inner: inner, repoName: repoName, index: index, total: total, runReview: ui.RunReview}
 }
 
 func (p *tuiPrompter) RiskyFiles(ctx context.Context, risky []string) (string, error) {
@@ -51,7 +55,7 @@ func (p *tuiPrompter) Accept(ctx context.Context, hadReadme bool, old, new strin
 		HeadReadme:   headReadme,
 		CurrentDraft: new,
 	}
-	decision := ui.RunReview(ctx2)
+	decision := p.runReview(ctx2)
 	switch decision {
 	case ui.ReviewAccept:
 		return "a", nil
