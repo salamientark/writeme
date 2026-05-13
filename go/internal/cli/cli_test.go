@@ -232,12 +232,12 @@ func TestParseHelpReturnsErrUsage(t *testing.T) {
 
 func TestXDGStateDir(t *testing.T) {
 	got := XDGStateDir(envFromMap(map[string]string{"HOME": "/h"}))
-	want := filepath.Join("/h", ".local", "state", AppName)
+	want := filepath.Join("/h", ".cache", AppName, "state")
 	if got != want {
 		t.Errorf("got %q want %q", got, want)
 	}
-	got2 := XDGStateDir(envFromMap(map[string]string{"HOME": "/h", "XDG_STATE_HOME": "/s"}))
-	want2 := filepath.Join("/s", AppName)
+	got2 := XDGStateDir(envFromMap(map[string]string{"HOME": "/h", "XDG_CACHE_HOME": "/c"}))
+	want2 := filepath.Join("/c", AppName, "state")
 	if got2 != want2 {
 		t.Errorf("got %q want %q", got2, want2)
 	}
