@@ -1,7 +1,6 @@
 package pipeline
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"os"
@@ -171,6 +170,7 @@ func TestPipelineModePrompt(t *testing.T) {
 }
 
 func TestPipelineFailedGeneration(t *testing.T) {
+	// Per Python parity: nonzero → prompt → [d]iscard → skipped (claude_nonzero_exit).
 	bare := setupBareRemote(t, "demo3")
 	reposDir := filepath.Join(t.TempDir(), "repos")
 	stateDir := filepath.Join(t.TempDir(), "state")
@@ -181,12 +181,12 @@ func TestPipelineFailedGeneration(t *testing.T) {
 		ContribFetch: func(ctx context.Context, _, _ string) ([]string, error) { return nil, nil },
 		Runner:       &fakeRunner{fail: true}, // claude returns nonzero
 		User:         "u",
-		Stdin:        strings.NewReader("a\n"),
+		Stdin:        strings.NewReader("a\nd\n"),
 		Stdout:       &bytes.Buffer{},
 		Stderr:       &bytes.Buffer{},
 	}
 	sum, _ := Run(context.Background(), cfg, store, deps)
-	if sum.Counts[state.StatusFailed] != 1 {
+	if sum.Counts[state.StatusSkipped] != 1 {
 		t.Errorf("got %+v", sum.Counts)
 	}
 }
@@ -240,30 +240,7 @@ func TestPipelineResume(t *testing.T) {
 	}
 }
 
-func TestPromptModeAllChoices(t *testing.T) {
-	cases := map[string]string{"p\n": "pr", "m\n": "direct", "c\n": "commit-only", "n\n": "skip"}
-	for in, want := range cases {
-		r := bufio.NewReader(strings.NewReader(in))
-		got := promptMode(r, &bytes.Buffer{})
-		if string(got) != want {
-			t.Errorf("in=%q got=%q want=%q", in, got, want)
-		}
-	}
-}
-
-func TestPromptModeRetry(t *testing.T) {
-	r := bufio.NewReader(strings.NewReader("xx\np\n"))
-	if got := promptMode(r, &bytes.Buffer{}); got != "pr" {
-		t.Error(got)
-	}
-}
-
-func TestPromptModeEOF(t *testing.T) {
-	r := bufio.NewReader(strings.NewReader(""))
-	if got := promptMode(r, &bytes.Buffer{}); got != "skip" {
-		t.Error(got)
-	}
-}
+// promptMode/promptReview tests moved to internal/commit and internal/review.
 
 func TestPipelineNilStore(t *testing.T) {
 	_, err := Run(context.Background(), cli.Config{}, nil, Deps{})
@@ -334,23 +311,6 @@ func TestPipelineMkdirError(t *testing.T) {
 	}
 	if _, err := Run(context.Background(), cfg, store, deps); err == nil {
 		t.Fatal("want err")
-	}
-}
-
-func TestPromptReviewEOF(t *testing.T) {
-	r := bufio.NewReader(strings.NewReader(""))
-	if got := promptReview(r, &bytes.Buffer{}); got != "q" {
-		t.Errorf("got %q", got)
-	}
-}
-
-func TestPromptReviewAllChoices(t *testing.T) {
-	for _, in := range []string{"a\n", "r\n", "d\n", "q\n"} {
-		r := bufio.NewReader(strings.NewReader(in))
-		got := promptReview(r, &bytes.Buffer{})
-		if got != strings.TrimSpace(in) {
-			t.Errorf("in=%q got=%q", in, got)
-		}
 	}
 }
 
