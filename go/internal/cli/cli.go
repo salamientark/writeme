@@ -172,13 +172,9 @@ func XDGCacheDir(env Env) string {
 	return filepath.Join(home, ".cache", AppName)
 }
 
+// XDGStateDir returns the state directory. Historically this lived under
+// $XDG_STATE_HOME, but writeme consolidates everything under the cache root so
+// `--clean` wipes state along with cloned repos.
 func XDGStateDir(env Env) string {
-	if env == nil {
-		env = OSEnv
-	}
-	if v, ok := env("XDG_STATE_HOME"); ok && v != "" {
-		return filepath.Join(v, AppName)
-	}
-	home, _ := env("HOME")
-	return filepath.Join(home, ".local", "state", AppName)
+	return filepath.Join(XDGCacheDir(env), "state")
 }

@@ -124,9 +124,18 @@ func TestRecordRace(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+	// All 20 writes must reach the file (no torn lines under contention).
+	recs, err := s.readAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 20 {
+		t.Errorf("got %d raw records, want 20", len(recs))
+	}
+	// Summary dedupes by repo, so the same repo recorded 20× collapses to 1.
 	sum, _ := s.Summary()
-	if sum.Counts[StatusPushed] != 20 {
-		t.Errorf("got %d want 20", sum.Counts[StatusPushed])
+	if sum.Counts[StatusPushed] != 1 {
+		t.Errorf("got %d deduped, want 1", sum.Counts[StatusPushed])
 	}
 }
 

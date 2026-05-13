@@ -253,8 +253,19 @@ func (s *Store) Summary() (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
-	sum := Summary{Counts: map[string]int{}}
+	// Dedup: keep only the latest record per repo so prior-run failures that
+	// were later retried/succeeded don't keep showing up in the summary.
+	last := map[string]Record{}
+	order := make([]string, 0, len(recs))
 	for _, r := range recs {
+		if _, ok := last[r.Repo]; !ok {
+			order = append(order, r.Repo)
+		}
+		last[r.Repo] = r
+	}
+	sum := Summary{Counts: map[string]int{}}
+	for _, name := range order {
+		r := last[name]
 		sum.Counts[r.Status]++
 		if r.Status == StatusPROpened && r.PRURL != "" {
 			sum.PRURLs = append(sum.PRURLs, r.PRURL)

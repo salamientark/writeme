@@ -52,10 +52,57 @@ func ScrubEnv(base []string, extra []string) []string {
 	return out
 }
 
+// evalSymlinksAncestor resolves symlinks on the deepest existing ancestor of p
+// and re-joins the missing tail. Lets callers pass paths whose leaf does not
+// exist yet while still hardening against symlink escapes in the existing prefix.
+func evalSymlinksAncestor(p string) (string, error) {
+	cur := p
+	var tail []string
+	for {
+		real, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			return filepath.Join(append([]string{real}, tail...)...), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", fmt.Errorf("no existing ancestor for %q", p)
+		}
+		tail = append([]string{filepath.Base(cur)}, tail...)
+		cur = parent
+	}
+}
+
 // StageSkill writes the embedded SKILL.md into <repoDir>/.claude/skills/create-readme/.
+// repoDir MUST resolve under basePath; otherwise an error is returned
+// (defense-in-depth against path traversal — RT-H9).
 // Returns an idempotent cleanup func.
-func StageSkill(repoDir string) (func(), error) {
-	dst := filepath.Join(repoDir, ".claude", "skills", "create-readme", "SKILL.md")
+func StageSkill(basePath, repoDir string) (func(), error) {
+	cleanBase := filepath.Clean(basePath)
+	cleanRepo := filepath.Clean(repoDir)
+	baseAbs, err := filepath.Abs(cleanBase)
+	if err != nil {
+		return func() {}, fmt.Errorf("resolve basePath: %w", err)
+	}
+	repoAbs, err := filepath.Abs(cleanRepo)
+	if err != nil {
+		return func() {}, fmt.Errorf("resolve repoDir: %w", err)
+	}
+	baseReal, err := filepath.EvalSymlinks(baseAbs)
+	if err != nil {
+		return func() {}, fmt.Errorf("resolve basePath symlinks: %w", err)
+	}
+	repoReal, err := evalSymlinksAncestor(repoAbs)
+	if err != nil {
+		return func() {}, fmt.Errorf("resolve repoDir symlinks: %w", err)
+	}
+	rel, err := filepath.Rel(baseReal, repoReal)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return func() {}, fmt.Errorf("repoDir %q not under base %q", repoDir, basePath)
+	}
+	dst := filepath.Join(repoReal, ".claude", "skills", "create-readme", "SKILL.md")
 	var prev []byte
 	hadPrev := false
 	if b, err := os.ReadFile(dst); err == nil {
@@ -77,9 +124,9 @@ func StageSkill(repoDir string) (func(), error) {
 		}
 		_ = os.Remove(dst)
 		// Drop only directories created by this call (Remove fails if non-empty).
-		_ = os.Remove(filepath.Join(repoDir, ".claude", "skills", "create-readme"))
-		_ = os.Remove(filepath.Join(repoDir, ".claude", "skills"))
-		_ = os.Remove(filepath.Join(repoDir, ".claude"))
+		_ = os.Remove(filepath.Join(repoReal, ".claude", "skills", "create-readme"))
+		_ = os.Remove(filepath.Join(repoReal, ".claude", "skills"))
+		_ = os.Remove(filepath.Join(repoReal, ".claude"))
 	}, nil
 }
 
@@ -99,6 +146,7 @@ type GenerationResult struct {
 	Status        Status
 	OldContent    string
 	NewContent    string
+	PrevDraft     string // last draft before this iteration's redo (empty on first pass)
 	RiskyFiles    []string
 	SecretMatches []string
 	Error         string
@@ -149,7 +197,7 @@ func (ShellRunner) Run(ctx context.Context, repoDir string, env []string) (int, 
 
 // GenerateDraft executes the full pipeline: risky scan → restore baseline →
 // claude → blast-radius → secret scan.
-func GenerateDraft(ctx context.Context, runner Runner, repoDir string, env []string) (GenerationResult, error) {
+func GenerateDraft(ctx context.Context, runner Runner, basePath, repoDir string, env []string) (GenerationResult, error) {
 	risky, err := secrets.WalkRiskyFiles(repoDir)
 	if err != nil {
 		return GenerationResult{}, fmt.Errorf("walk risky files: %w", err)
@@ -157,7 +205,7 @@ func GenerateDraft(ctx context.Context, runner Runner, repoDir string, env []str
 	restoreBaseline(ctx, repoDir)
 	old := readFile(filepath.Join(repoDir, "README.md"))
 
-	cleanup, err := StageSkill(repoDir)
+	cleanup, err := StageSkill(basePath, repoDir)
 	if err != nil {
 		return GenerationResult{}, fmt.Errorf("stage skill: %w", err)
 	}

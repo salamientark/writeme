@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/salamientark/writeme/internal/cli"
@@ -147,7 +146,9 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 
 	sandboxBase := filepath.Join(cfg.ReposDir, ".sandbox")
 
-	resultsCh := worker.Run(ctx, cfg.Parallel, jobs, func(jobCtx context.Context, j job) (prepResult, error) {
+	jobsCtx, jobsCancel := context.WithCancel(ctx)
+	defer jobsCancel()
+	resultsCh := worker.Run(jobsCtx, cfg.Parallel, jobs, func(jobCtx context.Context, j job) (prepResult, error) {
 		repoDir := filepath.Join(cfg.ReposDir, j.repo.Name)
 		if err := commit.CloneOrFetch(jobCtx, j.repo.SSHURL, repoDir); err != nil {
 			return prepResult{Repo: j.repo, Err: fmt.Errorf("clone: %w", err)}, nil
@@ -167,7 +168,7 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			genCtx, cancel = context.WithTimeout(jobCtx, time.Duration(cfg.ClaudeTimeout)*time.Second)
 			defer cancel()
 		}
-		gen, err := review.GenerateDraft(genCtx, deps.Runner, repoDir, env)
+		gen, err := review.GenerateDraft(genCtx, deps.Runner, cfg.ReposDir, repoDir, env)
 		return prepResult{Repo: j.repo, Generation: gen, Err: err}, nil
 	})
 
@@ -177,7 +178,10 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 		}
 	}
 
-	// Single consumer: review prompt + ship action per result.
+	prompter := review.NewStdinPrompter(stdinReader, deps.Stdout)
+	cleaner := func(c context.Context, dir string) error { return safety.EnsureClean(c, dir) }
+
+	// Single consumer: review FSM + ship action per result.
 	for r := range resultsCh {
 		pr := r.Value
 		if r.Err != nil {
@@ -190,45 +194,69 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			recordOrWarn(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: pr.Err.Error()})
 			continue
 		}
-		gen := pr.Generation
-		if gen.Status != review.StatusReady {
-			errMsg := string(gen.Status)
-			if gen.Error != "" {
-				errMsg = string(gen.Status) + ": " + gen.Error
-			}
-			recordOrWarn(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: errMsg})
-			fmt.Fprintf(deps.Stderr, "FAILED %s: %s\n", pr.Repo.Name, errMsg)
-			continue
-		}
 		repoDir := filepath.Join(cfg.ReposDir, pr.Repo.Name)
-		if len(gen.SecretMatches) > 0 {
-			fmt.Fprintf(deps.Stderr, "BLOCKED %s: secrets in generated README (%d match(es))\n", pr.Repo.Name, len(gen.SecretMatches))
-			recordOrWarn(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: "secret_in_generated_content"})
-			_ = safety.EnsureClean(ctx, repoDir)
+
+		// Render diff before prompting (FSM does not echo it itself).
+		if pr.Generation.Status == review.StatusReady {
+			text, derr := diff.Plain(ctx, repoDir)
+			if derr != nil {
+				fmt.Fprintf(deps.Stderr, "WARN %s: render diff failed: %v\n", pr.Repo.Name, derr)
+			} else {
+				fmt.Fprintf(deps.Stdout, "\n=== %s ===\n%s\n", pr.Repo.Name, text)
+			}
+		}
+
+		gen := pr.Generation
+		regen := func(gCtx context.Context, prev string) (review.GenerationResult, error) {
+			jobSandbox, sbErr := sandbox.JobSandbox(filepath.Join(cfg.ReposDir, ".sandbox"), pr.Repo.Name)
+			if sbErr != nil {
+				return review.GenerationResult{}, sbErr
+			}
+			defer jobSandbox.Cleanup()
+			env := review.ScrubEnv(deps.Env, sandbox.EnvFor(jobSandbox))
+			rgCtx := gCtx
+			if cfg.ClaudeTimeout > 0 {
+				var cancel context.CancelFunc
+				rgCtx, cancel = context.WithTimeout(gCtx, time.Duration(cfg.ClaudeTimeout)*time.Second)
+				defer cancel()
+			}
+			out, err := review.GenerateDraft(rgCtx, deps.Runner, cfg.ReposDir, repoDir, env)
+			out.PrevDraft = prev
+			return out, err
+		}
+
+		res := review.Loop(ctx, review.SessionConfig{
+			RepoDir:         repoDir,
+			RepoName:        pr.Repo.Name,
+			HadReadmeBefore: pr.Repo.HadReadmeBefore,
+			Pregenerated:    &gen,
+			Generator:       regen,
+			Prompter:        prompter,
+			Cleaner:         cleaner,
+		})
+
+		switch res.Decision {
+		case review.DecisionQuit:
+			recordOrWarn(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{Error: res.Reason})
+			jobsCancel()
+			for range resultsCh {
+				// drain to let producers exit cleanly
+			}
+			goto done
+		case review.DecisionFailed:
+			recordOrWarn(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: res.Reason})
+			fmt.Fprintf(deps.Stderr, "FAILED %s: %s\n", pr.Repo.Name, res.Reason)
 			continue
-		}
-		// Render diff + prompt.
-		text, _ := diff.Plain(ctx, repoDir)
-		fmt.Fprintf(deps.Stdout, "\n=== %s ===\n%s\n", pr.Repo.Name, text)
-		choice := promptReview(stdinReader, deps.Stdout)
-		if choice == "q" {
-			recordOrWarn(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{Error: "user_quit"})
-			break
-		}
-		if choice == "d" {
-			recordOrWarn(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{})
-			_ = safety.EnsureClean(ctx, repoDir)
+		case review.DecisionSkipped:
+			recordOrWarn(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{Error: res.Reason})
 			continue
+		case review.DecisionAccepted:
+			// fall through to ship
 		}
-		if choice == "r" {
-			recordOrWarn(pr.Repo.Name, state.StatusSkipped, state.RecordOpts{Error: "redo_unsupported_v1"})
-			_ = safety.EnsureClean(ctx, repoDir)
-			continue
-		}
-		// accept → ship
+
 		mode := commit.Mode(cfg.Mode)
 		if mode == "" {
-			mode = promptMode(stdinReader, deps.Stdout)
+			mode = commit.PromptMode(ctx, stdinReader, deps.Stdout)
 		}
 		out := commit.CommitAndPush(ctx, repoDir, commit.Options{
 			Mode:                  mode,
@@ -240,6 +268,7 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 		opts := state.RecordOpts{Mode: out.Mode, PRURL: out.PRURL, Error: out.Error}
 		recordOrWarn(pr.Repo.Name, out.Status, opts)
 	}
+done:
 
 	// Final unpushed scan.
 	findings, err := unpushed.Scan(ctx, cfg.ReposDir)
@@ -262,39 +291,4 @@ func filterOutProcessed(repos []fetch.Repo, processed map[string]state.Record) [
 		}
 	}
 	return out
-}
-
-func promptReview(r *bufio.Reader, w io.Writer) string {
-	for {
-		fmt.Fprint(w, "[a]ccept / [r]edo / [d]iscard / [q]uit: ")
-		line, err := r.ReadString('\n')
-		if err != nil && line == "" {
-			return "q"
-		}
-		s := strings.ToLower(strings.TrimSpace(line))
-		switch s {
-		case "a", "r", "d", "q":
-			return s
-		}
-	}
-}
-
-func promptMode(r *bufio.Reader, w io.Writer) commit.Mode {
-	for {
-		fmt.Fprint(w, "Mode? [p]r / [m]ain (direct) / [c]ommit-only / [n]o: ")
-		line, err := r.ReadString('\n')
-		if err != nil && line == "" {
-			return commit.ModeSkip
-		}
-		switch strings.ToLower(strings.TrimSpace(line)) {
-		case "p":
-			return commit.ModePR
-		case "m":
-			return commit.ModeDirect
-		case "c":
-			return commit.ModeCommitOnly
-		case "n":
-			return commit.ModeSkip
-		}
-	}
 }

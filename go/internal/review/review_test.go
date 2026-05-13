@@ -57,7 +57,7 @@ func TestScrubEnv(t *testing.T) {
 
 func TestStageSkill(t *testing.T) {
 	dir := t.TempDir()
-	cleanup, err := StageSkill(dir)
+	cleanup, err := StageSkill(dir, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func (f *fakeRunner) Run(ctx context.Context, repoDir string, env []string) (int
 func TestGenerateDraftReady(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
-	got, err := GenerateDraft(context.Background(), &fakeRunner{produce: "# Hello"}, dir, nil)
+	got, err := GenerateDraft(context.Background(), &fakeRunner{produce: "# Hello"}, dir, dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestGenerateDraftReady(t *testing.T) {
 func TestGenerateDraftNonzero(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
-	got, _ := GenerateDraft(context.Background(), &fakeRunner{exitCode: 1}, dir, nil)
+	got, _ := GenerateDraft(context.Background(), &fakeRunner{exitCode: 1}, dir, dir, nil)
 	if got.Status != StatusNonzero {
 		t.Errorf("got %+v", got)
 	}
@@ -130,7 +130,7 @@ func TestGenerateDraftNonzero(t *testing.T) {
 func TestGenerateDraftTimeout(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
-	got, _ := GenerateDraft(context.Background(), &fakeRunner{err: context.DeadlineExceeded}, dir, nil)
+	got, _ := GenerateDraft(context.Background(), &fakeRunner{err: context.DeadlineExceeded}, dir, dir, nil)
 	if got.Status != StatusTimeout {
 		t.Errorf("got %+v", got)
 	}
@@ -139,7 +139,7 @@ func TestGenerateDraftTimeout(t *testing.T) {
 func TestGenerateDraftBlastRadius(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
-	got, _ := GenerateDraft(context.Background(), &fakeRunner{produce: "# OK", extra: true}, dir, nil)
+	got, _ := GenerateDraft(context.Background(), &fakeRunner{produce: "# OK", extra: true}, dir, dir, nil)
 	if got.Status != StatusBlastRadius {
 		t.Errorf("got %+v", got)
 	}
@@ -186,7 +186,7 @@ func TestShellRunnerMissingBinary(t *testing.T) {
 func TestGenerateDraftRunError(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
-	got, _ := GenerateDraft(context.Background(), &fakeRunner{err: errors.New("explode")}, dir, nil)
+	got, _ := GenerateDraft(context.Background(), &fakeRunner{err: errors.New("explode")}, dir, dir, nil)
 	if got.Status != StatusFailed {
 		t.Errorf("got %+v", got)
 	}

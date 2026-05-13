@@ -37,8 +37,9 @@ func run() int {
 	}
 
 	if cfg.Clean {
-		fmt.Fprintf(os.Stderr, "Removing %s\n", cfg.ReposDir)
-		_ = os.RemoveAll(cfg.ReposDir)
+		cacheRoot := cli.XDGCacheDir(cli.OSEnv)
+		fmt.Fprintf(os.Stderr, "Removing %s\n", cacheRoot)
+		_ = os.RemoveAll(cacheRoot)
 		return 0
 	}
 
