@@ -2,7 +2,7 @@ name: go
 
 on:
   push:
-    branches: [main, feat-go-port]
+    branches: [main, feat-go-port, feat-go-polish]
     paths:
       - 'go/**'
       - '.github/workflows/go.yml'
