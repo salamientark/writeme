@@ -52,6 +52,29 @@ func ScrubEnv(base []string, extra []string) []string {
 	return out
 }
 
+// evalSymlinksAncestor resolves symlinks on the deepest existing ancestor of p
+// and re-joins the missing tail. Lets callers pass paths whose leaf does not
+// exist yet while still hardening against symlink escapes in the existing prefix.
+func evalSymlinksAncestor(p string) (string, error) {
+	cur := p
+	var tail []string
+	for {
+		real, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			return filepath.Join(append([]string{real}, tail...)...), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", fmt.Errorf("no existing ancestor for %q", p)
+		}
+		tail = append([]string{filepath.Base(cur)}, tail...)
+		cur = parent
+	}
+}
+
 // StageSkill writes the embedded SKILL.md into <repoDir>/.claude/skills/create-readme/.
 // repoDir MUST resolve under basePath; otherwise an error is returned
 // (defense-in-depth against path traversal — RT-H9).
@@ -71,7 +94,7 @@ func StageSkill(basePath, repoDir string) (func(), error) {
 	if err != nil {
 		return func() {}, fmt.Errorf("resolve basePath symlinks: %w", err)
 	}
-	repoReal, err := filepath.EvalSymlinks(repoAbs)
+	repoReal, err := evalSymlinksAncestor(repoAbs)
 	if err != nil {
 		return func() {}, fmt.Errorf("resolve repoDir symlinks: %w", err)
 	}
