@@ -9,7 +9,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/salamientark/writeme/internal/cli"
 	"github.com/salamientark/writeme/internal/commit"
@@ -21,6 +24,7 @@ import (
 	"github.com/salamientark/writeme/internal/sandbox"
 	"github.com/salamientark/writeme/internal/selection"
 	"github.com/salamientark/writeme/internal/state"
+	"github.com/salamientark/writeme/internal/ui"
 	"github.com/salamientark/writeme/internal/unpushed"
 	"github.com/salamientark/writeme/internal/worker"
 )
@@ -109,55 +113,111 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 		}
 	}
 
-	// TODO(phase4): wire filters into selection display via convertForFilters.
+	// Convert repos for selection display.
+	selRepos := convertToSelectionRepos(repos, contribByName)
 	_ = contribByName
 
-	if len(repos) == 0 {
+	if len(selRepos) == 0 {
 		fmt.Fprintln(deps.Stdout, "Nothing selected.")
 		return store.Summary()
 	}
 
 	stdinReader := bufio.NewReader(deps.Stdin)
-	selection.RenderPlain(deps.Stdout, repos)
-	picked, err := selection.Prompt(stdinReader, deps.Stdout, len(repos))
-	if err != nil {
-		return state.Summary{}, err
-	}
-	if len(picked) == 0 {
-		fmt.Fprintln(deps.Stdout, "Nothing selected.")
-		sum, _ := store.Summary()
-		return sum, nil
+
+	// Selection: TUI when available and not overridden.
+	var pickedRepos []selection.Repo
+	if !cfg.Plain && isTerminal(deps.Stdout) && isTerminalReader(deps.Stdin) {
+		result := ui.RunSelection(selRepos)
+		if result.Quit || len(result.Repos) == 0 {
+			fmt.Fprintln(deps.Stdout, "Nothing selected.")
+			sum, _ := store.Summary()
+			return sum, nil
+		}
+		pickedRepos = result.Repos
+	} else {
+		selection.RenderPlain(deps.Stdout, repos)
+		picked, err := selection.Prompt(stdinReader, deps.Stdout, len(repos))
+		if err != nil {
+			return state.Summary{}, err
+		}
+		if len(picked) == 0 {
+			fmt.Fprintln(deps.Stdout, "Nothing selected.")
+			sum, _ := store.Summary()
+			return sum, nil
+		}
+		// Map indices back to selection.Repo.
+		for _, idx := range picked {
+			pickedRepos = append(pickedRepos, selRepos[idx])
+		}
 	}
 
-	// Build job list.
+	// Build job list from selected repos.
 	type job struct {
-		repo fetch.Repo
+		repo selection.Repo
 	}
-	jobs := make([]job, 0, len(picked))
-	for _, idx := range picked {
-		jobs = append(jobs, job{repo: repos[idx]})
+	jobs := make([]job, 0, len(pickedRepos))
+	for _, r := range pickedRepos {
+		jobs = append(jobs, job{repo: r})
+	}
+
+	// Build a name → fetch.Repo map for clone URLs.
+	repoByName := make(map[string]fetch.Repo, len(repos))
+	for _, r := range repos {
+		repoByName[r.Name] = r
 	}
 
 	type prepResult struct {
-		Repo       fetch.Repo
+		Repo       selection.Repo
 		Generation review.GenerationResult
 		Err        error
 	}
 
 	sandboxBase := filepath.Join(cfg.ReposDir, ".sandbox")
 
+	// Serialized progress printer (workers run in parallel).
+	var progMu sync.Mutex
+	var started, finished int
+	totalJobs := len(jobs)
+	progress := func(format string, a ...any) {
+		progMu.Lock()
+		defer progMu.Unlock()
+		fmt.Fprintf(deps.Stderr, format, a...)
+	}
+	fmt.Fprintf(deps.Stderr, "\nGenerating READMEs (%d repos, parallel=%d) — Claude working...\n", totalJobs, cfg.Parallel)
+
 	jobsCtx, jobsCancel := context.WithCancel(ctx)
 	defer jobsCancel()
 	resultsCh := worker.Run(jobsCtx, cfg.Parallel, jobs, func(jobCtx context.Context, j job) (prepResult, error) {
+		progMu.Lock()
+		started++
+		idx := started
+		progMu.Unlock()
+		progress("  [%d/%d] ⏳ %s — generating...\n", idx, totalJobs, j.repo.Name)
+		start := time.Now()
 		repoDir := filepath.Join(cfg.ReposDir, j.repo.Name)
 		if err := commit.CloneOrFetch(jobCtx, j.repo.SSHURL, repoDir); err != nil {
+			progMu.Lock()
+			finished++
+			done := finished
+			progMu.Unlock()
+			progress("  [%d/%d] ✗ %s — clone failed (%v)\n", done, totalJobs, j.repo.Name, time.Since(start).Round(time.Second))
 			return prepResult{Repo: j.repo, Err: fmt.Errorf("clone: %w", err)}, nil
 		}
 		if err := safety.EnsureClean(jobCtx, repoDir); err != nil {
+			progMu.Lock()
+			finished++
+			done := finished
+			progMu.Unlock()
+			progress("  [%d/%d] ✗ %s — dirty repo (%v)\n", done, totalJobs, j.repo.Name, time.Since(start).Round(time.Second))
 			return prepResult{Repo: j.repo, Err: err}, nil
 		}
 		jobSandbox, err := sandbox.JobSandbox(sandboxBase, j.repo.Name)
 		if err != nil {
+			progMu.Lock()
+			finished++
+			done := finished
+			progMu.Unlock()
+			progress("  [%d/%d] ✗ %s — sandbox err (%v)\n", done, totalJobs, j.repo.Name, time.Since(start).Round(time.Second))
 			return prepResult{Repo: j.repo, Err: err}, nil
 		}
 		defer jobSandbox.Cleanup()
@@ -169,6 +229,18 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			defer cancel()
 		}
 		gen, err := review.GenerateDraft(genCtx, deps.Runner, cfg.ReposDir, repoDir, env)
+		progMu.Lock()
+		finished++
+		done := finished
+		progMu.Unlock()
+		mark := "✓"
+		status := "ready"
+		if err != nil {
+			mark, status = "✗", "error"
+		} else if gen.Status != review.StatusReady {
+			mark, status = "⚠", string(gen.Status)
+		}
+		progress("  [%d/%d] %s %s — %s (%v)\n", done, totalJobs, mark, j.repo.Name, status, time.Since(start).Round(time.Second))
 		return prepResult{Repo: j.repo, Generation: gen, Err: err}, nil
 	})
 
@@ -178,10 +250,13 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 		}
 	}
 
-	prompter := review.NewStdinPrompter(stdinReader, deps.Stdout)
+	basePrompter := review.NewStdinPrompter(stdinReader, deps.Stdout)
+	useTUI := !cfg.Plain && isTerminal(deps.Stdout) && isTerminalReader(deps.Stdin)
 	cleaner := func(c context.Context, dir string) error { return safety.EnsureClean(c, dir) }
 
 	// Single consumer: review FSM + ship action per result.
+	totalRepos := len(pickedRepos)
+	repoIdx := 0
 	for r := range resultsCh {
 		pr := r.Value
 		if r.Err != nil {
@@ -194,6 +269,7 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			recordOrWarn(pr.Repo.Name, state.StatusFailed, state.RecordOpts{Error: pr.Err.Error()})
 			continue
 		}
+		repoIdx++
 		repoDir := filepath.Join(cfg.ReposDir, pr.Repo.Name)
 
 		// Render diff before prompting (FSM does not echo it itself).
@@ -202,7 +278,7 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			if derr != nil {
 				fmt.Fprintf(deps.Stderr, "WARN %s: render diff failed: %v\n", pr.Repo.Name, derr)
 			} else {
-				fmt.Fprintf(deps.Stdout, "\n=== %s ===\n%s\n", pr.Repo.Name, text)
+				fmt.Fprintf(deps.Stdout, "\n──────── [%d/%d] %s ────────\n%s\n", repoIdx, totalRepos, pr.Repo.Name, text)
 			}
 		}
 
@@ -225,13 +301,19 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 			return out, err
 		}
 
+		// Choose prompter: TUI for accept screen when available.
+		var loopPrompter review.Prompter = basePrompter
+		if useTUI && gen.Status == review.StatusReady {
+			loopPrompter = NewTUIPrompter(basePrompter, pr.Repo.Name, repoIdx, totalRepos)
+		}
+
 		res := review.Loop(ctx, review.SessionConfig{
 			RepoDir:         repoDir,
 			RepoName:        pr.Repo.Name,
 			HadReadmeBefore: pr.Repo.HadReadmeBefore,
 			Pregenerated:    &gen,
 			Generator:       regen,
-			Prompter:        prompter,
+			Prompter:        loopPrompter,
 			Cleaner:         cleaner,
 		})
 
@@ -291,4 +373,39 @@ func filterOutProcessed(repos []fetch.Repo, processed map[string]state.Record) [
 		}
 	}
 	return out
+}
+
+// convertToSelectionRepos converts fetch.Repo to selection.Repo, attaching contributor data.
+func convertToSelectionRepos(repos []fetch.Repo, contribByName map[string][]string) []selection.Repo {
+	out := make([]selection.Repo, len(repos))
+	for i, r := range repos {
+		out[i] = selection.Repo{
+			Name:            r.Name,
+			SSHURL:          r.SSHURL,
+			PushedAt:        r.PushedAt,
+			HadReadmeBefore: r.HadReadmeBefore,
+			DiskUsage:       r.DiskUsage,
+			IsFork:          r.IsFork,
+			Contributors:    contribByName[r.Name],
+		}
+	}
+	return out
+}
+
+// isTerminal reports whether w is a terminal.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
+}
+
+// isTerminalReader reports whether r is a terminal.
+func isTerminalReader(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(f.Fd()))
 }
