@@ -65,26 +65,6 @@ func TestDecode_EmptyString(t *testing.T) {
 	}
 }
 
-// mockReader implements Reader via a string of pre-canned raw sequences.
-type mockReader struct {
-	raw string
-	pos int
-	buf []byte
-}
-
-func newMockReader(rawn string) *mockReader {
-	return &mockReader{raw: rawn}
-}
-
-func (m *mockReader) Read(p []byte) (int, error) {
-	if m.pos >= len(m.raw) {
-		return 0, nil
-	}
-	n := copy(p, m.raw[m.pos:])
-	m.pos += n
-	return n, nil
-}
-
 // TestDecodeMapExhaustive verifies every entry in csiNames round-trips correctly.
 func TestDecodeMapExhaustive(t *testing.T) {
 	for seq, name := range csiNames {

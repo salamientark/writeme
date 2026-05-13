@@ -32,11 +32,11 @@ const (
 
 // reviewModel is the bubbletea Model for the review screen.
 type reviewModel struct {
-	ctx       ReviewContext
-	viewIdx   int
-	offsets   []int // per-view scroll offset
-	width     int
-	height    int
+	ctx     ReviewContext
+	viewIdx int
+	offsets []int // per-view scroll offset
+	width   int
+	height  int
 }
 
 var reviewViews = []string{"README", "diff_head", "diff_prev", "raw"}
@@ -137,14 +137,15 @@ func (m *reviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if msg.Button == tea.MouseButtonWheelUp {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
 			if m.offsets[m.viewIdx] > 0 {
 				m.offsets[m.viewIdx] -= 3
 				if m.offsets[m.viewIdx] < 0 {
 					m.offsets[m.viewIdx] = 0
 				}
 			}
-		} else if msg.Button == tea.MouseButtonWheelDown {
+		case tea.MouseButtonWheelDown:
 			vp := m.viewport()
 			total := m.lineCount(reviewViews[m.viewIdx])
 			maxOff := total - vp

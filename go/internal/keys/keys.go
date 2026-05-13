@@ -12,12 +12,12 @@ import (
 
 // CSI escape sequence → symbolic name mapping.
 var csiNames = map[string]string{
-	"\x1b[A": "up",
-	"\x1b[B": "down",
-	"\x1b[C": "right",
-	"\x1b[D": "left",
-	"\x1b[H": "home",
-	"\x1b[F": "end",
+	"\x1b[A":  "up",
+	"\x1b[B":  "down",
+	"\x1b[C":  "right",
+	"\x1b[D":  "left",
+	"\x1b[H":  "home",
+	"\x1b[F":  "end",
 	"\x1b[5~": "pgup",
 	"\x1b[6~": "pgdn",
 	"\x1b[3~": "delete",

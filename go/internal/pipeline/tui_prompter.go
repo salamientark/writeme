@@ -16,7 +16,6 @@ type tuiPrompter struct {
 	repoName  string
 	index     int
 	total     int
-	old       string
 	runReview runReviewFn
 }
 
