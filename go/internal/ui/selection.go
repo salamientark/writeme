@@ -88,15 +88,15 @@ func (m *selectionModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterMode = false
 		return m, nil
 	case "backspace":
-		if len(m.filterBuf) > 0 {
-			m.filterBuf = m.filterBuf[:len(m.filterBuf)-1]
+		if r := []rune(m.filterBuf); len(r) > 0 {
+			m.filterBuf = string(r[:len(r)-1])
 		}
 		m.state = m.state.WithFilter(m.filterBuf)
 		return m, nil
 	default:
-		s := msg.String()
-		if len(s) == 1 && isPrintable(s) {
-			m.filterBuf += s
+		// Accept a single printable rune (multibyte-safe).
+		if r := msg.Runes; len(r) == 1 && r[0] >= 32 {
+			m.filterBuf += string(r)
 			m.state = m.state.WithFilter(m.filterBuf)
 		}
 		return m, nil
@@ -201,8 +201,9 @@ func titledBox(title, tag string, body []string, innerW int) string {
 
 	var b strings.Builder
 	b.WriteString(top + "\n")
+	clip := lipgloss.NewStyle().MaxWidth(innerW)
 	for _, ln := range body {
-		b.WriteString(v + padTo(ln, innerW) + vr + "\n")
+		b.WriteString(v + padTo(clip.Render(ln), innerW) + vr + "\n")
 	}
 	b.WriteString(bot)
 	return b.String()
@@ -252,7 +253,10 @@ func (m *selectionModel) View() string {
 		}
 		name := row.Repo.Name
 		if lipgloss.Width(name) > nameMax {
-			name = name[:nameMax-1] + "…"
+			nr := []rune(name)
+			if nameMax-1 < len(nr) {
+				name = string(nr[:nameMax-1]) + "…"
+			}
 		}
 		nst := selName
 		if !row.IsSelected {
@@ -324,7 +328,14 @@ func (m *selectionModel) View() string {
 		if fgap < 1 {
 			fgap = 1
 		}
-		fbody := []string{input + strings.Repeat(" ", fgap) + selDim.Render(matches) + " "}
+		hint := selDim.Render("live filter  ·  ") +
+			selKey.Render("enter") + selDim.Render("/") + selKey.Render("esc") +
+			selDim.Render(" back to list to toggle/confirm")
+		fbody := []string{
+			input + strings.Repeat(" ", fgap) + selDim.Render(matches) + " ",
+			"",
+			" " + hint,
+		}
 		b.WriteString("\n")
 		b.WriteString(titledBox("Filter", "", fbody, innerW))
 	case m.showHelp:
