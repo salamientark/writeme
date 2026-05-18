@@ -56,7 +56,6 @@ signs:
       - "--output-signature=${signature}"
       - "${artifact}"
       - --yes
-    artifacts: all
 
 changelog:
   sort: asc
