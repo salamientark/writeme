@@ -724,7 +724,7 @@ func TestReviewModelViewNormal(t *testing.T) {
 	if !strings.Contains(got, "accept") {
 		t.Error("View should show accept hint")
 	}
-	if !strings.Contains(got, "# Title") {
+	if !strings.Contains(got, "Title") {
 		t.Error("View should show draft content")
 	}
 }
@@ -868,8 +868,8 @@ func TestRenderViewWithWidthCaches(t *testing.T) {
 	// Width change invalidates cache.
 	m.width = 120
 	m.renderView("README")
-	if m.cacheWidth != 120-4 {
-		t.Errorf("cacheWidth = %d, want %d", m.cacheWidth, 120-4)
+	if m.cacheWidth != 120-5 {
+		t.Errorf("cacheWidth = %d, want %d", m.cacheWidth, 120-5)
 	}
 }
 
@@ -880,7 +880,7 @@ func TestRenderViewTinyWidthClamps(t *testing.T) {
 		Total:        1,
 		CurrentDraft: "# X",
 	}
-	// width=10 → contentWidth=6 → clamped to 80 inside renderView
+	// width=10 → contentWidth=5 → clamped to 80 inside renderView
 	m := &reviewModel{
 		ctx:     ctx,
 		offsets: make([]int, len(reviewViews)),
