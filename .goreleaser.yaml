@@ -4,8 +4,8 @@ version: 2
 
 builds:
   - id: writeme
-    main: ./go/cmd/writeme
-    dir: .
+    main: ./cmd/writeme
+    dir: go
     binary: writeme
     goos:
       - linux
