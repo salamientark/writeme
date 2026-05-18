@@ -153,8 +153,16 @@ if [[ -t 1 ]]; then
   clear
 fi
 
+# When this script is run via `curl ... | bash`, bash reads the script
+# body from stdin. writeme's interactive TUI would otherwise consume the
+# remaining script lines as keystrokes. Bind its stdin to the controlling
+# terminal instead; fall back to inherited stdin when no tty (CI/pipes).
 set +e
-"$BIN_DIR/writeme" "$@"
+if [[ -e /dev/tty ]]; then
+  "$BIN_DIR/writeme" "$@" < /dev/tty
+else
+  "$BIN_DIR/writeme" "$@"
+fi
 EXIT_CODE=$?
 set -e
 exit "$EXIT_CODE"
