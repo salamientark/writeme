@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 260" font-family="ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00ADD8"/>
+      <stop offset="0.55" stop-color="#5B8DEF"/>
+      <stop offset="1" stop-color="#8A2BE2"/>
+    </linearGradient>
+  </defs>
+  <rect width="720" height="260" rx="16" fill="#0d1117"/>
+  <text x="360" y="86" text-anchor="middle" xml:space="preserve"
+        font-size="26" font-weight="700" fill="url(#g)" letter-spacing="0.5">
+    <tspan x="360" dy="0">__      ___ __ _| |_ ___ _ __ ___   ___</tspan>
+    <tspan x="360" dy="34"> \ \ /\ / / '__| | __/ _ \ '_ ` _ \ / _ \</tspan>
+    <tspan x="360" dy="34">  \ V  V /| |  | | ||  __/ | | | | |  __/</tspan>
+    <tspan x="360" dy="34"> \_/\_/ |_|  |_|\__\___|_| |_| |_|\___|</tspan>
+  </text>
+  <text x="360" y="222" text-anchor="middle" font-size="15" fill="#8b949e"
+        font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif" letter-spacing="2">
+    PICK REPOS &#183; CLAUDE DRAFTS &#183; REVIEW &amp; PUSH
+  </text>
+</svg>
