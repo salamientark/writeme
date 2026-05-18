@@ -13,13 +13,20 @@ import (
 	"syscall"
 
 	"github.com/salamientark/writeme/internal/cli"
-	"github.com/salamientark/writeme/internal/commit"
+	commitpkg "github.com/salamientark/writeme/internal/commit"
 	"github.com/salamientark/writeme/internal/contributors"
 	"github.com/salamientark/writeme/internal/fetch"
 	"github.com/salamientark/writeme/internal/pipeline"
 	"github.com/salamientark/writeme/internal/review"
 	"github.com/salamientark/writeme/internal/safety"
 	"github.com/salamientark/writeme/internal/state"
+)
+
+// Build information set via ldflags.
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
 )
 
 func main() {
@@ -34,6 +41,11 @@ func run() int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
+	}
+
+	if cfg.Version {
+		fmt.Printf("writeme %s commit=%s date=%s\n", version, commit, date)
+		return 0
 	}
 
 	if cfg.Clean {
@@ -71,7 +83,7 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	commit.WarnGPGSigning(ctx, ".", os.Stderr)
+	commitpkg.WarnGPGSigning(ctx, ".", os.Stderr)
 
 	deps := pipeline.Deps{
 		Fetcher:      fetch.NewGHFetcher(os.Stderr),
@@ -132,6 +144,9 @@ func ghAPIUser() (string, error) {
 }
 
 func printSummary(store *state.Store) {
+	if store == nil {
+		return
+	}
 	sum, err := store.Summary()
 	if err != nil {
 		return

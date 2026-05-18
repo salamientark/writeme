@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# gh-readme-pipeline launcher: ephemeral mktemp sandbox, no persistent install.
-# See docs/specs/features/gh-readme-pipeline.md
+# writeme launcher: downloads the Go binary, runs in an ephemeral sandbox.
+# No persistent install — everything lives under a mktemp sandbox.
 set -euo pipefail
 
 NUKE_ON_FAIL="${NUKE_ON_FAIL:-0}"
 REPO_URL="${REPO_URL:-https://github.com/salamientark/writeme}"
-REF="${REF:-main}"
+VERSION="${VERSION:-latest}"
 EXPECTED_SHA="${EXPECTED_SHA:-0000000000000000000000000000000000000000}"
 SKIP_DEP_CHECK="${SKIP_DEP_CHECK:-0}"
 
-# CRIT-1: validate REF — only allow safe git ref characters.
-if [[ ! "$REF" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-  echo "invalid REF: must match ^[A-Za-z0-9._/-]+$" >&2
-  exit 4
+# `latest` uses the /releases/latest/download/ path; tags use /releases/download/<tag>/.
+if [[ "$VERSION" == "latest" ]]; then
+  REL_PATH="releases/latest/download"
+else
+  REL_PATH="releases/download/${VERSION}"
 fi
+CHECKSUM_URL="${REPO_URL}/${REL_PATH}/checksums.txt"
 
 require_dep() {
   local cmd="$1" hint="$2"
@@ -26,12 +28,14 @@ require_dep() {
 
 if [[ "$SKIP_DEP_CHECK" != "1" ]]; then
   fail=0
-  require_dep git    "https://git-scm.com/downloads"            || fail=1
-  require_dep mktemp "(coreutils)"                              || fail=1
-  require_dep gh     "https://cli.github.com/"                  || fail=1
-  require_dep claude "https://claude.com/claude-code"           || fail=1
-  require_dep uv     "https://docs.astral.sh/uv/"               || fail=1
-  require_dep python "https://www.python.org/downloads/"        || fail=1
+  require_dep git    "https://git-scm.com/downloads"     || fail=1
+  require_dep mktemp "(coreutils)"                        || fail=1
+  require_dep gh     "https://cli.github.com/"            || fail=1
+  require_dep claude "https://claude.com/claude-code"     || fail=1
+  require_dep curl   "https://curl.se/"                   || fail=1
+  require_dep tar    "(coreutils)"                        || fail=1
+  require_dep uname  "(coreutils)"                        || fail=1
+  require_dep tr     "(coreutils)"                        || fail=1
   if [[ "$fail" == "1" ]]; then
     exit 1
   fi
@@ -41,13 +45,43 @@ if [[ "$SKIP_DEP_CHECK" != "1" ]]; then
   fi
 fi
 
-# RT-M1: prefer XDG_RUNTIME_DIR (per-user, mode 700) over /tmp; chmod 700 either way.
+# Resolve platform/arch (after the dependency gate so missing uname/tr
+# exit via the controlled path, not 127).
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64)  ARCH="amd64" ;;
+  aarch64) ARCH="arm64" ;;
+  arm64)   ARCH="arm64" ;;
+  *)
+    echo "unsupported architecture: $ARCH" >&2
+    exit 4
+    ;;
+esac
+case "$OS" in
+  linux|darwin) ;;
+  *)
+    echo "unsupported OS: $OS (use Windows binary directly)" >&2
+    exit 4
+    ;;
+esac
+
+# Resolve a sha256 implementation (linux: sha256sum, macOS: shasum -a 256).
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256_of() { sha256sum "$1" | awk '{print $1}'; }
+elif command -v shasum >/dev/null 2>&1; then
+  sha256_of() { shasum -a 256 "$1" | awk '{print $1}'; }
+else
+  echo "missing dependency: sha256sum or shasum" >&2
+  exit 1
+fi
+
+# Ephemeral sandbox.
 BASE_DIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
 WORKDIR="$(mktemp -d -p "$BASE_DIR" writeme.XXXXXX)"
 chmod 700 "$WORKDIR"
 EXIT_CODE=1
 
-# shellcheck disable=SC2317  # cleanup is invoked via trap
 cleanup() {
   if [[ "$EXIT_CODE" == "0" || "$NUKE_ON_FAIL" == "1" ]]; then
     rm -rf "$WORKDIR"
@@ -57,39 +91,57 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$EXPECTED_SHA" != "0000000000000000000000000000000000000000" ]]; then
-  git -C "$WORKDIR" init -q program
-  git -C "$WORKDIR/program" remote add origin "$REPO_URL"
-  if ! git -C "$WORKDIR/program" fetch -q --depth=1 origin "$EXPECTED_SHA" 2>/dev/null; then
-    echo "SHA pin mismatch: cannot fetch $EXPECTED_SHA from $REPO_URL" >&2
-    EXIT_CODE=3
-    exit 3
-  fi
-  git -C "$WORKDIR/program" -c advice.detachedHead=false checkout -q FETCH_HEAD
-  ACTUAL_SHA="$(git -C "$WORKDIR/program" rev-parse HEAD)"
-  if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
-    echo "SHA pin mismatch: expected $EXPECTED_SHA, got $ACTUAL_SHA" >&2
-    EXIT_CODE=3
-    exit 3
-  fi
-else
-  if [[ "$EXPECTED_SHA" != "0000000000000000000000000000000000000000" && -n "$EXPECTED_SHA" ]]; then
-    echo "warning: EXPECTED_SHA invalid format, falling back to ref=$REF" >&2
-  fi
-  # RT-H1: branch fetch is unpinned; warn loudly and require explicit consent.
-  echo "WARNING: fetching unpinned ref '$REF' from $REPO_URL — repo writer can serve arbitrary code." >&2
-  if [[ "${WRITEME_ALLOW_UNPINNED:-0}" != "1" ]]; then
-    if ! { read -r confirm < /dev/tty; } 2>/dev/null; then
-      echo "no controlling tty for unpinned-ref confirmation; set WRITEME_ALLOW_UNPINNED=1 to override" >&2
-      exit 5
-    fi
-    if [[ "$confirm" != "yes" ]]; then
-      echo "aborted: unpinned ref not confirmed" >&2
-      exit 5
-    fi
-  fi
-  git clone -q --depth=1 "--branch=$REF" "$REPO_URL" "$WORKDIR/program"
+# Fetch the release checksum manifest first — it resolves the exact
+# (versioned) archive name even when VERSION=latest.
+echo "Downloading writeme ${VERSION} (${OS}/${ARCH})..." >&2
+BIN_DIR="$WORKDIR/bin"
+mkdir -p "$BIN_DIR"
+
+if ! curl -fsSL -o "$WORKDIR/checksums.txt" "$CHECKSUM_URL"; then
+  echo "failed to download $CHECKSUM_URL" >&2
+  EXIT_CODE=1
+  exit 1
 fi
+
+ARCHIVE_NAME=$(grep -E "_${OS}_${ARCH}\.tar\.gz\$" "$WORKDIR/checksums.txt" | awk '{print $NF}' | head -n1)
+if [[ -z "$ARCHIVE_NAME" ]]; then
+  echo "no release asset for ${OS}/${ARCH} in checksums.txt" >&2
+  EXIT_CODE=4
+  exit 4
+fi
+DOWNLOAD_URL="${REPO_URL}/${REL_PATH}/${ARCHIVE_NAME}"
+
+if ! curl -fsSL -o "$WORKDIR/${ARCHIVE_NAME}" "$DOWNLOAD_URL"; then
+  echo "failed to download $DOWNLOAD_URL" >&2
+  EXIT_CODE=1
+  exit 1
+fi
+
+# Integrity: the downloaded archive must match the release manifest hash.
+MANIFEST_SHA=$(grep -E " [*]?${ARCHIVE_NAME}\$" "$WORKDIR/checksums.txt" | awk '{print $1}' | head -n1)
+ACTUAL_SHA=$(sha256_of "$WORKDIR/${ARCHIVE_NAME}")
+if [[ -z "$MANIFEST_SHA" || "$ACTUAL_SHA" != "$MANIFEST_SHA" ]]; then
+  echo "SHA256 mismatch vs checksums.txt: manifest=$MANIFEST_SHA actual=$ACTUAL_SHA" >&2
+  EXIT_CODE=3
+  exit 3
+fi
+
+# Optional out-of-band pin: a real 64-hex EXPECTED_SHA must also match.
+if [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{64}$ ]]; then
+  if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+    echo "SHA256 pin mismatch: expected $EXPECTED_SHA, got $ACTUAL_SHA" >&2
+    EXIT_CODE=3
+    exit 3
+  fi
+  echo "✓ checksum verified (pinned)" >&2
+elif [[ -z "$EXPECTED_SHA" || "$EXPECTED_SHA" =~ ^0+$ ]]; then
+  echo "✓ checksum verified against release manifest (unpinned — set EXPECTED_SHA to pin)" >&2
+else
+  echo "warning: EXPECTED_SHA not 64-hex; verified against release manifest only" >&2
+fi
+
+tar -xzf "$WORKDIR/${ARCHIVE_NAME}" -C "$BIN_DIR"
+chmod +x "$BIN_DIR/writeme"
 
 mkdir -p "$WORKDIR/repo" "$WORKDIR/state" "$WORKDIR/cache"
 
@@ -102,11 +154,7 @@ if [[ -t 1 ]]; then
 fi
 
 set +e
-if [[ ! -t 0 ]] && (exec </dev/tty) 2>/dev/null; then
-  uv run --script "$WORKDIR/program/gh_readme_pipeline.py" "$@" < /dev/tty
-else
-  uv run --script "$WORKDIR/program/gh_readme_pipeline.py" "$@"
-fi
+"$BIN_DIR/writeme" "$@"
 EXIT_CODE=$?
 set -e
 exit "$EXIT_CODE"

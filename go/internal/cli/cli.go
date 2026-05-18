@@ -42,6 +42,7 @@ type Config struct {
 	Limit         int
 	GHUser        string
 	CommitMessage string
+	Version       bool
 }
 
 type Env func(key string) (string, bool)
@@ -75,6 +76,7 @@ func Parse(argv []string, env Env, stderr io.Writer) (Config, error) {
 	fs.BoolVar(&cfg.SkipCI, "skip-ci", false, "Append [skip ci] to commit message.")
 	fs.IntVar(&parallelFlag, "parallel", sentinelInt, "Parallel claude workers (1-8).")
 	fs.BoolVar(&cfg.Plain, "plain", false, "Disable Rich UI.")
+	fs.BoolVar(&cfg.Version, "version", false, "Print version and exit.")
 
 	if err := fs.Parse(argv); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

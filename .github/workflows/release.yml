@@ -7,116 +7,89 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to dry-run (must already exist, e.g. v0.1.2)'
+        description: 'Tag to release (must already exist, e.g. v1.0.0-go.1)'
         required: true
-      dry_run:
-        description: 'Skip branch push and gh release create'
+      draft:
+        description: 'Create as draft release'
         type: boolean
         default: true
 
 permissions:
   contents: write
+  packages: write
+  id-token: write
 
 jobs:
-  release:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: go/go.sum
+      - run: go vet ./...
+      - run: go test -race -cover ./...
+
+  goreleaser:
+    needs: test
+    if: github.event_name == 'push' || github.event.inputs.draft == 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: '3.11'
+          go-version: '1.25'
+          cache-dependency-path: go/go.sum
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
 
-      - name: Configure git identity for tests
+      - name: Configure git for tests
         run: |
           git config --global user.email "ci@example.com"
           git config --global user.name "CI"
           git config --global init.defaultBranch main
 
-      - name: Run tests
-        run: python -m unittest discover -s tests -v
-
-      - name: Resolve tag commit SHA
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          args: release --clean
         env:
-          REF_NAME: ${{ github.ref_name }}
-          INPUT_TAG: ${{ github.event.inputs.tag }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          if [[ "$EVENT" == "workflow_dispatch" ]]; then
-            VERSION="$INPUT_TAG"
-          else
-            VERSION="$REF_NAME"
-          fi
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.]+)?$ ]]; then
-            echo "invalid VERSION: $VERSION" >&2
-            exit 1
-          fi
-          SHA=$(git rev-parse "${VERSION}^{commit}")
-          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
-          echo "SHA=${SHA}" >> "$GITHUB_ENV"
-          echo "Tag ${VERSION} -> commit ${SHA}"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pin EXPECTED_SHA in install.sh
-        run: |
-          python - <<'PY'
-          import os, re, pathlib
-          sha = os.environ["SHA"]
-          p = pathlib.Path("install.sh")
-          src = p.read_text()
-          replacement = 'EXPECTED_SHA="$' + '{EXPECTED_SHA:-' + sha + '}"'
-          new = re.sub(
-              r'EXPECTED_SHA="\$\{EXPECTED_SHA:-[0-9a-f]{40}\}"',
-              replacement,
-              src,
-              count=1,
-          )
-          if new == src:
-              raise SystemExit("EXPECTED_SHA placeholder not found in install.sh")
-          p.write_text(new)
-          PY
-          grep -n EXPECTED_SHA install.sh | head -3
+  goreleaser-dry-run:
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.draft == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
-      - name: Create release branch with pinned SHA
-        if: github.event_name == 'push' || github.event.inputs.dry_run != 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          BRANCH="release/${VERSION}"
-          git checkout -b "${BRANCH}"
-          git commit -am "chore: pin EXPECTED_SHA for ${VERSION}"
-          git push origin "${BRANCH}"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: go/go.sum
 
-      - name: Create GitHub Release
-        if: github.event_name == 'push' || github.event.inputs.dry_run != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          NOTES="docs/releases/${VERSION}.md"
-          if [[ -f "$NOTES" ]]; then
-            gh release create "${VERSION}" \
-              --title "${VERSION}" \
-              --notes-file "$NOTES" \
-              install.sh gh_readme_pipeline.py
-          else
-            gh release create "${VERSION}" \
-              --title "${VERSION}" \
-              --generate-notes \
-              install.sh gh_readme_pipeline.py
-          fi
+      - name: Run goreleaser (dry-run)
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          args: release --snapshot --clean --skip=sign,sbom,publish
 
-      - name: Fast-forward latest branch
-        if: github.event_name == 'push' || github.event.inputs.dry_run != 'true'
+      - name: Show artifacts
         run: |
-          git push origin "+HEAD:refs/heads/latest"
-
-      - name: Dry-run summary
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
-        run: |
-          echo "DRY RUN — no branch pushed, no release created."
-          echo "Would pin SHA=${SHA} on release/${VERSION}"
-          echo "Would attach: install.sh gh_readme_pipeline.py"
+          echo "Snapshot built. Artifacts:"
+          ls -la dist/
