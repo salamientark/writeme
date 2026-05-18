@@ -57,12 +57,12 @@ func RunSelection(repos []selection.Repo) SelectionResult {
 func (m *selectionModel) Init() tea.Cmd { return nil }
 
 // viewportFor returns the list height that keeps the whole render within the
-// terminal. Normal mode reserves 6 lines of chrome; filter mode also shows
-// the Filter box below the list (~6 extra lines), so reserve more.
-func viewportFor(termHeight int, filtering bool) int {
+// terminal. Normal mode reserves 6 lines of chrome; filter mode and the help
+// panel each show ~6 extra lines below the list, so reserve more.
+func viewportFor(termHeight int, filtering, showHelp bool) int {
 	reserve := 6
 	min := 5
-	if filtering {
+	if filtering || showHelp {
 		reserve = 12
 		min = 3
 	}
@@ -78,7 +78,7 @@ func (m *selectionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.state = m.state.ResizeViewport(viewportFor(msg.Height, m.filterMode)).Move(0)
+		m.state = m.state.ResizeViewport(viewportFor(msg.Height, m.filterMode, m.showHelp)).Move(0)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -96,7 +96,7 @@ func (m *selectionModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "esc", "enter":
 		m.filterMode = false
-		m.state = m.state.ResizeViewport(viewportFor(m.height, false)).Move(0)
+		m.state = m.state.ResizeViewport(viewportFor(m.height, false, false)).Move(0)
 		return m, nil
 	case "backspace":
 		if r := []rune(m.filterBuf); len(r) > 0 {
@@ -123,10 +123,11 @@ func (m *selectionModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.filterMode = true
 		m.filterBuf = m.state.Filter
-		m.state = m.state.ResizeViewport(viewportFor(m.height, true)).Move(0)
+		m.state = m.state.ResizeViewport(viewportFor(m.height, true, false)).Move(0)
 		return m, nil
 	case "?":
 		m.showHelp = !m.showHelp
+		m.state = m.state.ResizeViewport(viewportFor(m.height, false, m.showHelp)).Move(0)
 		return m, nil
 	case "up", "k":
 		m.state = m.state.Move(-1)
@@ -176,6 +177,25 @@ var (
 	selKey     = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 )
 
+// truncWidth shortens s to at most w display columns (double-width runes and
+// emoji counted correctly), appending "…" when it cuts.
+func truncWidth(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= w {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if lipgloss.Width(b.String()+string(r)+"…") > w {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String() + "…"
+}
+
 // padTo right-pads s (ANSI-aware) to width w.
 func padTo(s string, w int) string {
 	gap := w - lipgloss.Width(s)
@@ -195,6 +215,20 @@ func titledBox(title, tag string, body []string, innerW int) string {
 		}
 		return strings.Repeat(bd.Top, n)
 	}
+	// Clamp title+tag to the available width (innerW minus 2 lead dashes and
+	// the 4 surrounding pad spaces) so a long title can't make fill negative
+	// and blow the top border past the body/bottom width. Tag keeps priority.
+	budget := innerW - 6
+	if budget < 0 {
+		budget = 0
+	}
+	if w := lipgloss.Width(tag); w > budget {
+		tag = truncWidth(tag, budget)
+		budget = 0
+	} else {
+		budget -= w
+	}
+	title = truncWidth(title, budget)
 	titleSeg := ""
 	if title != "" {
 		titleSeg = " " + selAccent.Render(title) + " "
@@ -263,13 +297,7 @@ func (m *selectionModel) View() string {
 		if nameMax < 4 {
 			nameMax = 4
 		}
-		name := row.Repo.Name
-		if lipgloss.Width(name) > nameMax {
-			nr := []rune(name)
-			if nameMax-1 < len(nr) {
-				name = string(nr[:nameMax-1]) + "…"
-			}
-		}
+		name := truncWidth(row.Repo.Name, nameMax)
 		nst := selName
 		if !row.IsSelected {
 			nst = selDim
