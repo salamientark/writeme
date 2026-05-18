@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 )
 
 var (
@@ -65,27 +64,9 @@ func EnsureClean(ctx context.Context, repoDir string) error {
 	return nil
 }
 
-// AcquireLock takes an exclusive non-blocking flock on path. Returns release func.
-func AcquireLock(path string) (release func() error, err error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("mkdir lock dir: %w", err)
-	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("open lock: %w", err)
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return nil, ErrLocked
-		}
-		return nil, fmt.Errorf("flock %s: %w", path, err)
-	}
-	return func() error {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		return f.Close()
-	}, nil
-}
+// AcquireLock takes an exclusive non-blocking advisory lock on path. Returns
+// a release func. Platform-specific implementations live in lock_unix.go and
+// lock_windows.go.
 
 // BlastRadius parses git status --porcelain -z and returns sorted touched paths
 // excluding README.md. Empty result = clean to ship.

@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/salamientark/writeme/internal/safety"
 	"github.com/salamientark/writeme/internal/secrets"
@@ -166,7 +165,7 @@ func (ShellRunner) Run(ctx context.Context, repoDir string, env []string) (int, 
 	cmd := exec.CommandContext(ctx, "claude", "-p", "/create-readme", "--permission-mode", "acceptEdits")
 	cmd.Dir = repoDir
 	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcessGroup(cmd)
 	stdinNull, err := os.Open(os.DevNull)
 	if err != nil {
 		return -1, "", err
@@ -177,7 +176,7 @@ func (ShellRunner) Run(ctx context.Context, repoDir string, env []string) (int, 
 	cmd.Stderr = &sb
 	cmd.Cancel = func() error {
 		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			killProcessGroup(cmd)
 		}
 		return nil
 	}
