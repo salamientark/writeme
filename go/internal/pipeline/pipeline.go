@@ -68,10 +68,12 @@ func Run(ctx context.Context, cfg cli.Config, store *state.Store, deps Deps) (st
 		return state.Summary{}, fmt.Errorf("mkdir repos: %w", err)
 	}
 
+	fmt.Fprintf(deps.Stderr, "Fetching repositories for %s…\n", deps.User)
 	repos, err := deps.Fetcher.ListRepos(ctx, deps.User, cfg.Limit)
 	if err != nil {
 		return state.Summary{}, fmt.Errorf("list repos: %w", err)
 	}
+	fmt.Fprintf(deps.Stderr, "Found %d repositories. Loading contributors…\n", len(repos))
 
 	// Contributor enrichment (parallel).
 	cachePath := filepath.Join(cfg.ReposDir, ".contributors.json")

@@ -3,24 +3,30 @@
 # No persistent install — everything lives under a mktemp sandbox.
 set -euo pipefail
 
-# Intro banner (frozen figlet "writeme", matches src/ui/logo.py). Shown on
-# stderr during download; the binary clears the screen before its TUI.
-if [[ -t 2 ]]; then
-  printf '\033[36m' >&2          # cyan
-fi
-cat >&2 <<'EOF'
-               _ _
-              (_) |
-__      ___ __ _| |_ ___ _ __ ___   ___
-\ \ /\ / / '__| | __/ _ \ '_ ` _ \ / _ \
- \ V  V /| |  | | ||  __/ | | | | |  __/
-  \_/\_/ |_|  |_|\__\___|_| |_| |_|\___|
-EOF
-if [[ -t 2 ]]; then
-  printf '\033[0m' >&2           # reset
-fi
-echo "  auto-generate READMEs for your GitHub repos" >&2
-echo >&2
+# Intro banner (frozen figlet "writeme", matches src/ui/logo.py). Printed to
+# stderr and left on screen: the binary's TUI uses the alternate screen
+# buffer, so this stays visible through repo fetch and is restored on exit.
+banner() {
+  local cyan="" dim="" bold="" rst="" rule
+  if [[ -t 2 ]]; then
+    cyan=$'\033[1;36m'; dim=$'\033[2m'; bold=$'\033[1m'; rst=$'\033[0m'
+  fi
+  rule="──────────────────────────────────────────────────"
+  {
+    echo
+    echo "${cyan}    __      ___ __ _| |_ ___ _ __ ___   ___ ${rst}"
+    echo "${cyan}    \\ \\ /\\ / / '__| | __/ _ \\ '_ \` _ \\ / _ \\ ${rst}"
+    echo "${cyan}     \\ V  V /| |  | | ||  __/ | | | | |  __/ ${rst}"
+    echo "${cyan}      \\_/\\_/ |_|  |_|\\__\\___|_| |_| |_|\\___| ${rst}"
+    echo
+    echo "  ${dim}${rule}${rst}"
+    echo "  ${bold}auto-generate READMEs for your GitHub repos${rst}"
+    echo "  ${dim}pick repos  →  Claude drafts  →  review & push${rst}"
+    echo "  ${dim}${rule}${rst}"
+    echo
+  } >&2
+}
+banner
 
 NUKE_ON_FAIL="${NUKE_ON_FAIL:-0}"
 REPO_URL="${REPO_URL:-https://github.com/salamientark/writeme}"
@@ -168,9 +174,9 @@ export GH_README_REPOS_DIR="$WORKDIR/repo"
 export XDG_STATE_HOME="$WORKDIR/state"
 export XDG_CACHE_HOME="$WORKDIR/cache"
 
-if [[ -t 1 ]]; then
-  clear
-fi
+# No `clear` here: the binary's Bubble Tea TUI uses the alternate screen
+# buffer, so the banner + progress stay visible during repo fetch and the
+# terminal is restored to them on exit.
 
 # When this script is run via `curl ... | bash`, bash reads the script
 # body from stdin. writeme's interactive TUI would otherwise consume the
