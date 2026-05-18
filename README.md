@@ -1,24 +1,23 @@
+<div align="center">
+
+```
+ __      ___ __ _| |_ ___ _ __ ___   ___
+ \ \ /\ / / '__| | __/ _ \ '_ ` _ \ / _ \
+  \ V  V /| |  | | ||  __/ | | | | |  __/
+   \_/\_/ |_|  |_|\__\___|_| |_| |_|\___|
+```
+
 # writeme
 
-Interactive CLI to draft `README.md` files across all your GitHub repos using Claude Code's `/create-readme` skill — running in an **ephemeral sandbox** with zero persistent install.
+**Auto-generate `README.md` files across all your GitHub repos — pick repos, Claude drafts, review & push.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg)](https://go.dev/)
 [![Claude Code](https://img.shields.io/badge/claude--code-required-8A2BE2.svg)](https://claude.com/claude-code)
 
-Pick repos from a TUI, let Claude draft a README for each, review the diff, and ship via PR or direct commit. Nothing is written to your `$HOME` — the launcher runs from a `mktemp` sandbox and wipes itself on success.
+</div>
 
-## Features
-
-- **TUI repo picker** — paginated list of all your repos (sorted by recent activity), with bulk select.
-- **TUI review screen** — side-by-side diff, markdown preview, scroll, accept/redo/discard per repo.
-- **Three ship modes** — `pr` (branch + `gh pr create`), `direct` (commit on default branch), or `commit-only`.
-- **Blast-radius guard** — Claude is only allowed to touch `README.md`; any other modified file aborts the run.
-- **Secret scanner** — flags AWS keys, GitHub tokens, OpenAI keys, and private-key headers in generated drafts.
-- **Resumable** — `--resume` skips repos already processed in the state file.
-- **Parallel generation** — configurable worker pool (`--parallel`) for concurrent Claude invocations.
-- **SHA-pinned install** — `EXPECTED_SHA` verifies the binary checksum before any code runs.
-- **Zero footprint** — single static binary, no runtime dependencies, no shell config touched.
+Interactive CLI that drafts READMEs for your GitHub repos using Claude Code's `/create-readme` skill — running in an **ephemeral sandbox** with zero persistent install. Pick repos from a TUI, let Claude draft, review the diff, and ship via PR or direct commit. Nothing touches your `$HOME`: the launcher runs from a `mktemp` sandbox and wipes itself on success.
 
 ## Quick start
 
@@ -26,24 +25,30 @@ Pick repos from a TUI, let Claude draft a README for each, review the diff, and 
 curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/main/install.sh | bash
 ```
 
+The launcher checks dependencies, downloads the platform binary, verifies its checksum, runs the pipeline in a sandbox, and cleans up on exit.
+
 > [!TIP]
 > The installer resolves the most recent published release at runtime
 > (`releases/latest/download/`), independent of the script's git ref.
 >
-> For a specific version:
-> ```bash
-> VERSION=v1.0.0-go.1 \
->   curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/release/v1.0.0-go.1/install.sh | bash
-> ```
->
-> For maximum reproducibility, pin the SHA256 checksum:
+> Pin a version, and optionally the SHA256 for full reproducibility:
 > ```bash
 > EXPECTED_SHA=<64-char-sha256> \
 > VERSION=v1.0.0-go.1 \
 >   curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/release/v1.0.0-go.1/install.sh | bash
 > ```
 
-The launcher checks dependencies, downloads the platform binary, verifies the checksum, runs the pipeline in a sandbox, and cleans up on exit.
+## Features
+
+- **TUI repo picker** — paginated list of all your repos (sorted by recent activity), filter, bulk select.
+- **TUI review screen** — side-by-side diff, markdown preview, scroll, accept/redo/discard per repo.
+- **Three ship modes** — `pr` (branch + `gh pr create`), `direct` (commit on default branch), or `commit-only`.
+- **Blast-radius guard** — Claude may only touch `README.md`; any other modified file aborts the run.
+- **Secret scanner** — flags AWS keys, GitHub tokens, OpenAI keys, and private-key headers in drafts.
+- **Resumable** — `--resume` skips repos already processed in the state file.
+- **Parallel generation** — configurable worker pool (`--parallel`) for concurrent Claude invocations.
+- **SHA-pinned install** — `EXPECTED_SHA` verifies the binary checksum before any code runs.
+- **Zero footprint** — single static binary, no runtime deps, no shell config touched.
 
 ## Requirements
 
@@ -56,9 +61,18 @@ The launcher checks dependencies, downloads the platform binary, verifies the ch
 | `curl` | Binary download |
 | `tar` | Archive extraction |
 
-Run `gh auth login` first if `gh auth status` fails.
+Run `gh auth login` first if `gh auth status` fails. The `writeme` binary itself is a standalone Go executable — no Python, uv, or runtime needed.
 
-> The `writeme` binary itself is a standalone Go executable — no Python, uv, or runtime needed.
+## How it works
+
+For each selected repo:
+
+1. **Clone** — `git clone --depth 1 --filter=blob:none` into `$GH_README_REPOS_DIR/<name>/`.
+2. **Generate** — `claude /create-readme` with timeout. Output captured to `run.log`.
+3. **Blast-radius guard** — `git status --porcelain` must show only `README.md`. Anything else → abort, mark `failed`, restore baseline.
+4. **Secret scan** — flagged drafts require typed `yes-i-checked` to override.
+5. **Review** — TUI or plain-text: `accept / redo / discard / quit`. Overwriting an existing README requires typed `yes`.
+6. **Ship** — `pr`, `direct`, `commit-only`, or `skip`. Commit verb is `add` if no prior README, `update` otherwise.
 
 ## Usage
 
@@ -76,7 +90,7 @@ writeme [FLAGS]
 | `--skip-ci` | `SKIP_CI` | Append `[skip ci]` to commit message. |
 | `--clean` | — | Remove cache dir and exit. |
 | `--plain` | — | Disable TUI (plain-text mode). |
-| `--parallel <n>` | `WRITEME_PARALLEL` | Number of parallel Claude workers (1–8, default 3). |
+| `--parallel <n>` | `WRITEME_PARALLEL` | Parallel Claude workers (1–8, default 3). |
 | `--version` | — | Print version and exit. |
 | — | `LIMIT` | Repo cap (hard max 1000). |
 | — | `GH_USER` | Override authed user. |
@@ -86,37 +100,20 @@ Launcher-only env vars: `NUKE_ON_FAIL=1` wipes sandbox on failure; `VERSION` sel
 
 ### TUI controls
 
-**Selection screen:**
+**Selection screen** — header shows `(N selected of M)`; each row: `[x] [HAS README] <name> <pushed_at>`.
 
 ```
 ↑/↓  move        space  toggle        a  all
 n    none        enter  confirm       q  quit
-/    filter      esc   clear filter
+/    filter      esc    clear filter
 ```
-
-Header shows `(N selected of M)`. Each row: `[x] [HAS README] <name>  <pushed_at>`.
 
 **Review screen:**
 
 ```
-a/d        accept / discard
-r          redo (re-generate)
-q          quit
-↑/↓        scroll diff
+a/d   accept / discard      r   redo (re-generate)
+↑/↓   scroll diff            q   quit
 ```
-
-## Per-repo pipeline
-
-For each selected repo:
-
-1. **Clone** — `git clone --depth 1 --filter=blob:none` into `$GH_README_REPOS_DIR/<name>/`.
-2. **Generate** — `claude /create-readme` with timeout. Output captured to `run.log`.
-3. **Blast-radius guard** — `git status --porcelain` must show only `README.md`. Anything else → abort, mark `failed`, restore baseline.
-4. **Secret scan** — flagged drafts require typed `yes-i-checked` to override.
-5. **Review** — TUI or plain-text: `accept / redo / discard / quit`. Overwriting an existing README requires typed `yes`.
-6. **Ship** — `pr` (branch + push + PR), `direct` (commit on default branch), `commit-only`, or `skip`.
-
-Verb is chosen automatically: `add` if no prior README, `update` otherwise.
 
 ## Storage layout
 
@@ -129,7 +126,7 @@ Inside the sandbox (default):
 | `$WORKDIR/state/lock` | flock — one run at a time |
 | `$WORKDIR/cache/` | Contributor cache |
 
-Outside the launcher (direct binary invocation), paths fall back to `${XDG_CACHE_HOME:-~/.cache}/gh-readme-pipeline/` and state lives under `${XDG_CACHE_HOME:-~/.cache}/gh-readme-pipeline/state/`.
+Outside the launcher (direct binary invocation), paths fall back to `${XDG_CACHE_HOME:-~/.cache}/gh-readme-pipeline/`.
 
 ## Exit codes
 
@@ -157,42 +154,26 @@ Outside the launcher (direct binary invocation), paths fall back to `${XDG_CACHE
 git clone https://github.com/salamientark/writeme
 cd writeme/go
 
-# Build
-make build
-
-# Run tests
-make test
-make test-race
-
-# Lint + vet
-make lint
-make vet
-
-# Coverage gate (80% min)
-make coverage-gate
-
-# Build release snapshot
-make release-snapshot
+make build              # build binary
+make test               # run tests
+make test-race          # race detector
+make lint vet           # lint + vet
+make coverage-gate      # 80% coverage gate
+make release-snapshot   # build release snapshot
 ```
 
-Run the binary directly (skips the launcher sandbox):
+Run the binary directly (skips the launcher sandbox); state falls back to `~/.cache/gh-readme-pipeline/`:
 
 ```bash
 go run ./cmd/writeme --dry-run
 ```
 
-State falls back to `~/.cache/gh-readme-pipeline/`.
-
-### TUI smoke test
-
-1. `go run ./cmd/writeme --dry-run` against a test account.
-2. Verify arrows move the cursor, space toggles `[x]`, `a`/`n` bulk-select, resize keeps the viewport coherent, `q` aborts cleanly.
-3. On the review screen: scroll diff, accept/redo/discard cycle.
+**TUI smoke test:** run `--dry-run` against a test account; verify arrows move the cursor, space toggles `[x]`, `a`/`n` bulk-select, resize keeps the viewport coherent, `q` aborts cleanly; on the review screen, scroll the diff and cycle accept/redo/discard.
 
 ## Troubleshooting
 
 - **Sandbox preserved after failure** — stderr prints `kept /tmp/writeme.XXXXXX (exit=N)`. Inspect, then `rm -rf` manually.
-- **Checksum mismatch** — the downloaded binary doesn't match `EXPECTED_SHA`. Verify the SHA256 against the release page.
+- **Checksum mismatch** — downloaded binary doesn't match `EXPECTED_SHA`. Verify the SHA256 against the release page.
 - **`gh auth: not authenticated`** — run `gh auth login`, retry.
 - **Stuck lock** — another process holds `$XDG_CACHE_HOME/gh-readme-pipeline/state/lock`. Identify with `fuser`; remove only if no live pipeline.
 - **Rate-limited** — GraphQL `remaining < 10` triggers a sleep up to 60s; longer waits abort. Wait for `resetAt` and re-run.
