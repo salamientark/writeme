@@ -72,7 +72,10 @@ release:
   github:
     owner: salamientark
     name: writeme
-  draft: true
+  draft: false
+  # -go.N is a semver prerelease; force GitHub to still flag it "Latest"
+  # so releases/latest/download/ (install.sh default) resolves to it.
+  make_latest: "true"
   name_template: "{{ .Tag }}"
 
 # Snapshot for local testing.

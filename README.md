@@ -23,11 +23,12 @@ Pick repos from a TUI, let Claude draft a README for each, review the diff, and 
 ## Quick start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/latest/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/main/install.sh | bash
 ```
 
 > [!TIP]
-> The `latest` branch always points at the most recent published release.
+> The installer resolves the most recent published release at runtime
+> (`releases/latest/download/`), independent of the script's git ref.
 >
 > For a specific version:
 > ```bash
