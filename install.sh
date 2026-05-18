@@ -3,6 +3,25 @@
 # No persistent install — everything lives under a mktemp sandbox.
 set -euo pipefail
 
+# Intro banner (frozen figlet "writeme", matches src/ui/logo.py). Shown on
+# stderr during download; the binary clears the screen before its TUI.
+if [[ -t 2 ]]; then
+  printf '\033[36m' >&2          # cyan
+fi
+cat >&2 <<'EOF'
+               _ _
+              (_) |
+__      ___ __ _| |_ ___ _ __ ___   ___
+\ \ /\ / / '__| | __/ _ \ '_ ` _ \ / _ \
+ \ V  V /| |  | | ||  __/ | | | | |  __/
+  \_/\_/ |_|  |_|\__\___|_| |_| |_|\___|
+EOF
+if [[ -t 2 ]]; then
+  printf '\033[0m' >&2           # reset
+fi
+echo "  auto-generate READMEs for your GitHub repos" >&2
+echo >&2
+
 NUKE_ON_FAIL="${NUKE_ON_FAIL:-0}"
 REPO_URL="${REPO_URL:-https://github.com/salamientark/writeme}"
 VERSION="${VERSION:-latest}"
