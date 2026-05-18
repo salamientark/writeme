@@ -1,16 +1,32 @@
-# writeme
+<div align="center">
 
-Interactive CLI to draft `README.md` files across all your GitHub repos using Claude Code's `/create-readme` skill — running in an **ephemeral sandbox** with zero persistent install.
+```
+               _ _
+              (_) |
+__      ___ __ _| |_ ___ _ __ ___   ___
+\ \ /\ / / '__| | __/ _ \ '_ ` _ \ / _ \
+ \ V  V /| |  | | ||  __/ | | | | |  __/
+  \_/\_/ |_|  |_|\__\___|_| |_| |_|\___|
+```
+
+**Auto-generate READMEs for your GitHub repos.**
+`1. pick repos   2. Claude drafts   3. you review & push`
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg)](https://go.dev/)
 [![Claude Code](https://img.shields.io/badge/claude--code-required-8A2BE2.svg)](https://claude.com/claude-code)
 
+</div>
+
+---
+
+Interactive CLI to draft `README.md` files across all your GitHub repos using Claude Code's `/create-readme` skill — running in an **ephemeral sandbox** with zero persistent install.
+
 Pick repos from a TUI, let Claude draft a README for each, review the diff, and ship via PR or direct commit. Nothing is written to your `$HOME` — the launcher runs from a `mktemp` sandbox and wipes itself on success.
 
 ## Features
 
-- **TUI repo picker** — paginated list of all your repos (sorted by recent activity), with bulk select.
+- **TUI repo picker** — paginated list of all your repos (sorted by recent activity), with bulk select and filter.
 - **TUI review screen** — side-by-side diff, markdown preview, scroll, accept/redo/discard per repo.
 - **Three ship modes** — `pr` (branch + `gh pr create`), `direct` (commit on default branch), or `commit-only`.
 - **Blast-radius guard** — Claude is only allowed to touch `README.md`; any other modified file aborts the run.
@@ -26,24 +42,24 @@ Pick repos from a TUI, let Claude draft a README for each, review the diff, and 
 curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/main/install.sh | bash
 ```
 
+The launcher checks dependencies, downloads the platform binary, verifies the checksum, runs the pipeline in a sandbox, and cleans up on exit.
+
 > [!TIP]
 > The installer resolves the most recent published release at runtime
 > (`releases/latest/download/`), independent of the script's git ref.
 >
-> For a specific version:
+> Pin a specific version:
 > ```bash
 > VERSION=v1.0.0-go.1 \
 >   curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/release/v1.0.0-go.1/install.sh | bash
 > ```
 >
-> For maximum reproducibility, pin the SHA256 checksum:
+> For maximum reproducibility, also pin the SHA256 checksum:
 > ```bash
 > EXPECTED_SHA=<64-char-sha256> \
 > VERSION=v1.0.0-go.1 \
 >   curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/release/v1.0.0-go.1/install.sh | bash
 > ```
-
-The launcher checks dependencies, downloads the platform binary, verifies the checksum, runs the pipeline in a sandbox, and cleans up on exit.
 
 ## Requirements
 
@@ -58,7 +74,8 @@ The launcher checks dependencies, downloads the platform binary, verifies the ch
 
 Run `gh auth login` first if `gh auth status` fails.
 
-> The `writeme` binary itself is a standalone Go executable — no Python, uv, or runtime needed.
+> [!NOTE]
+> The `writeme` binary is a standalone Go executable — no Python, uv, or runtime needed.
 
 ## Usage
 
@@ -91,7 +108,7 @@ Launcher-only env vars: `NUKE_ON_FAIL=1` wipes sandbox on failure; `VERSION` sel
 ```
 ↑/↓  move        space  toggle        a  all
 n    none        enter  confirm       q  quit
-/    filter      esc   clear filter
+/    filter      esc    clear filter
 ```
 
 Header shows `(N selected of M)`. Each row: `[x] [HAS README] <name>  <pushed_at>`.
@@ -129,7 +146,7 @@ Inside the sandbox (default):
 | `$WORKDIR/state/lock` | flock — one run at a time |
 | `$WORKDIR/cache/` | Contributor cache |
 
-Outside the launcher (direct binary invocation), paths fall back to `${XDG_CACHE_HOME:-~/.cache}/gh-readme-pipeline/` and state lives under `${XDG_CACHE_HOME:-~/.cache}/gh-readme-pipeline/state/`.
+Outside the launcher (direct binary invocation), paths fall back to `${XDG_CACHE_HOME:-~/.cache}/gh-readme-pipeline/`, with state under its `state/` subdir.
 
 ## Exit codes
 
@@ -157,22 +174,12 @@ Outside the launcher (direct binary invocation), paths fall back to `${XDG_CACHE
 git clone https://github.com/salamientark/writeme
 cd writeme/go
 
-# Build
-make build
-
-# Run tests
-make test
-make test-race
-
-# Lint + vet
-make lint
-make vet
-
-# Coverage gate (80% min)
-make coverage-gate
-
-# Build release snapshot
-make release-snapshot
+make build            # build binary (ldflags-stamped version)
+make test             # go test -cover ./...
+make test-race        # race detector
+make lint vet         # golangci-lint + go vet
+make coverage-gate    # 80% coverage minimum
+make release-snapshot # local goreleaser snapshot
 ```
 
 Run the binary directly (skips the launcher sandbox):
@@ -196,3 +203,5 @@ State falls back to `~/.cache/gh-readme-pipeline/`.
 - **`gh auth: not authenticated`** — run `gh auth login`, retry.
 - **Stuck lock** — another process holds `$XDG_CACHE_HOME/gh-readme-pipeline/state/lock`. Identify with `fuser`; remove only if no live pipeline.
 - **Rate-limited** — GraphQL `remaining < 10` triggers a sleep up to 60s; longer waits abort. Wait for `resetAt` and re-run.
+</content>
+</invoke>
