@@ -56,6 +56,9 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
       - name: Configure git for tests
         run: |
           git config --global user.email "ci@example.com"

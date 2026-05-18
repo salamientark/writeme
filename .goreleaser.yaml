@@ -43,7 +43,7 @@ checksum:
 sboms:
   - artifacts: archive
     documents:
-      - "{{ .ProjectName }}_{{ .Version }}_sbom.spdx.json"
+      - "{{ .ArtifactName }}.sbom.spdx.json"
 
 signs:
   - artifacts: checksum
@@ -77,4 +77,4 @@ release:
 
 # Snapshot for local testing.
 snapshot:
-  name_template: "{{ .Version }}-snapshot-{{ .ShortCommit }}"
+  version_template: "{{ .Version }}-snapshot-{{ .ShortCommit }}"
