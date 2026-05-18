@@ -20,17 +20,6 @@ curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/main/install.s
 
 The launcher checks dependencies, downloads the platform binary, verifies its checksum, runs the pipeline in a sandbox, and cleans up on exit.
 
-> [!TIP]
-> The installer resolves the most recent published release at runtime
-> (`releases/latest/download/`), independent of the script's git ref.
->
-> Pin a version, and optionally the SHA256 for full reproducibility:
-> ```bash
-> EXPECTED_SHA=<64-char-sha256> \
-> VERSION=v1.0.0-go.1 \
->   curl -fsSL https://raw.githubusercontent.com/salamientark/writeme/release/v1.0.0-go.1/install.sh | bash
-> ```
-
 ## Features
 
 - **TUI repo picker** — paginated list of all your repos (sorted by recent activity), filter, bulk select.
