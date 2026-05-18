@@ -2,11 +2,7 @@
 
 <img src="assets/banner.svg" alt="writeme" width="640">
 
-# writeme
-
 **Auto-generate `README.md` files across all your GitHub repos.**
-
-_Pick repos · Claude drafts · review & push._
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg)](https://go.dev/)
