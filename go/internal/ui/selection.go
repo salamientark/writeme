@@ -21,6 +21,7 @@ type selectionModel struct {
 	state      *selection.SelectionState
 	filterMode bool
 	filterBuf  string
+	showHelp   bool
 	width      int
 	height     int
 }
@@ -55,16 +56,29 @@ func RunSelection(repos []selection.Repo) SelectionResult {
 
 func (m *selectionModel) Init() tea.Cmd { return nil }
 
+// viewportFor returns the list height that keeps the whole render within the
+// terminal. Normal mode reserves 6 lines of chrome; filter mode and the help
+// panel each show ~6 extra lines below the list, so reserve more.
+func viewportFor(termHeight int, filtering, showHelp bool) int {
+	reserve := 6
+	min := 5
+	if filtering || showHelp {
+		reserve = 12
+		min = 3
+	}
+	h := termHeight - reserve
+	if h < min {
+		h = min
+	}
+	return h
+}
+
 func (m *selectionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		h := msg.Height - 6
-		if h < 5 {
-			h = 5
-		}
-		m.state = m.state.ResizeViewport(h)
+		m.state = m.state.ResizeViewport(viewportFor(msg.Height, m.filterMode, m.showHelp)).Move(0)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -80,22 +94,20 @@ func (m *selectionModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "esc":
+	case "esc", "enter":
 		m.filterMode = false
-		return m, nil
-	case "enter":
-		m.filterMode = false
+		m.state = m.state.ResizeViewport(viewportFor(m.height, false, false)).Move(0)
 		return m, nil
 	case "backspace":
-		if len(m.filterBuf) > 0 {
-			m.filterBuf = m.filterBuf[:len(m.filterBuf)-1]
+		if r := []rune(m.filterBuf); len(r) > 0 {
+			m.filterBuf = string(r[:len(r)-1])
 		}
 		m.state = m.state.WithFilter(m.filterBuf)
 		return m, nil
 	default:
-		s := msg.String()
-		if len(s) == 1 && isPrintable(s) {
-			m.filterBuf += s
+		// Accept a single printable rune (multibyte-safe).
+		if r := msg.Runes; len(r) == 1 && r[0] >= 32 {
+			m.filterBuf += string(r)
 			m.state = m.state.WithFilter(m.filterBuf)
 		}
 		return m, nil
@@ -111,6 +123,11 @@ func (m *selectionModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.filterMode = true
 		m.filterBuf = m.state.Filter
+		m.state = m.state.ResizeViewport(viewportFor(m.height, true, false)).Move(0)
+		return m, nil
+	case "?":
+		m.showHelp = !m.showHelp
+		m.state = m.state.ResizeViewport(viewportFor(m.height, false, m.showHelp)).Move(0)
 		return m, nil
 	case "up", "k":
 		m.state = m.state.Move(-1)
@@ -148,88 +165,238 @@ func isPrintable(s string) bool {
 	return r >= 32 && r < 127
 }
 
+// Theme.
+var (
+	selAccent  = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	selGreen   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	selDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	selBadge   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	selBracket = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	selName    = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	selBorder  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	selKey     = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+)
+
+// truncWidth shortens s to at most w display columns (double-width runes and
+// emoji counted correctly), appending "…" when it cuts.
+func truncWidth(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= w {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if lipgloss.Width(b.String()+string(r)+"…") > w {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String() + "…"
+}
+
+// padTo right-pads s (ANSI-aware) to width w.
+func padTo(s string, w int) string {
+	gap := w - lipgloss.Width(s)
+	if gap <= 0 {
+		return s
+	}
+	return s + strings.Repeat(" ", gap)
+}
+
+// titledBox wraps body lines in a rounded border with a title on the top
+// seam and a right-aligned tag (e.g. count). innerW is the content width.
+func titledBox(title, tag string, body []string, innerW int) string {
+	bd := lipgloss.RoundedBorder()
+	hbar := func(n int) string {
+		if n < 0 {
+			n = 0
+		}
+		return strings.Repeat(bd.Top, n)
+	}
+	// Clamp title+tag to the available width (innerW minus 2 lead dashes and
+	// the 4 surrounding pad spaces) so a long title can't make fill negative
+	// and blow the top border past the body/bottom width. Tag keeps priority.
+	budget := innerW - 6
+	if budget < 0 {
+		budget = 0
+	}
+	if w := lipgloss.Width(tag); w > budget {
+		tag = truncWidth(tag, budget)
+		budget = 0
+	} else {
+		budget -= w
+	}
+	title = truncWidth(title, budget)
+	titleSeg := ""
+	if title != "" {
+		titleSeg = " " + selAccent.Render(title) + " "
+	}
+	tagSeg := ""
+	if tag != "" {
+		tagSeg = " " + selDim.Render(tag) + " "
+	}
+	used := lipgloss.Width(titleSeg) + lipgloss.Width(tagSeg) + 2 // 2 lead dashes
+	fill := innerW - used
+	top := selBorder.Render(bd.TopLeft+hbar(1)) + titleSeg +
+		selBorder.Render(hbar(fill)) + tagSeg + selBorder.Render(hbar(1)+bd.TopRight)
+	bot := selBorder.Render(bd.BottomLeft + hbar(innerW) + bd.BottomRight)
+	v := selBorder.Render(bd.Left)
+	vr := selBorder.Render(bd.Right)
+
+	var b strings.Builder
+	b.WriteString(top + "\n")
+	clip := lipgloss.NewStyle().MaxWidth(innerW)
+	for _, ln := range body {
+		b.WriteString(v + padTo(clip.Render(ln), innerW) + vr + "\n")
+	}
+	b.WriteString(bot)
+	return b.String()
+}
+
 // View renders the selection screen.
 func (m *selectionModel) View() string {
 	if m.width == 0 {
 		return "loading..."
 	}
 
-	filterStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	cursorStyle := lipgloss.NewStyle().Reverse(true).Bold(true)
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-
 	state := m.state
+	innerW := m.width - 4 // 2 border + 1 lead/trail pad each side
+	if innerW < 24 {
+		innerW = 24
+	}
+
+	visTotal := len(state.VisibleIndices())
 	rows := state.VisibleSlice()
 
-	var b strings.Builder
-
-	fmt.Fprintf(&b, "%s (%d repos, %d selected)\n\n",
-		headerStyle.Render("writeme — select repos"),
-		len(state.Repos), len(state.Selected))
-
+	// --- list body ---
+	body := make([]string, 0, state.ViewportHeight+1)
 	for _, row := range rows {
-		check := "[ ]"
-		if row.IsSelected {
-			check = selectedStyle.Render("[x]")
-		}
-		name := row.Repo.Name
-		if len(name) > 40 {
-			name = name[:37] + "..."
-		}
-		flags := ""
-		if row.Repo.HadReadmeBefore {
-			flags = dimStyle.Render(" README")
-		}
-		if row.Repo.IsFork {
-			flags += dimStyle.Render(" FORK")
-		}
-		line := fmt.Sprintf("%s %-40s%s", check, name, flags)
+		cur := " "
 		if row.IsCursor {
-			line = cursorStyle.Render(line)
+			cur = selAccent.Render("›")
 		}
-		fmt.Fprintln(&b, line)
+		check := selDim.Render("○")
+		if row.IsSelected {
+			check = selGreen.Render("◉")
+		}
+		// Fixed-width tag zone so chips stack in a vertical column:
+		// readme slot = len("[readme]")=8, fork slot = len("[fork]")=6.
+		readmeSlot := strings.Repeat(" ", 8)
+		if row.Repo.HadReadmeBefore {
+			readmeSlot = selBracket.Render("[") + selBadge.Render("readme") + selBracket.Render("]")
+		}
+		forkSlot := strings.Repeat(" ", 6)
+		if row.Repo.IsFork {
+			forkSlot = selBracket.Render("[") + selDim.Render("fork") + selBracket.Render("]")
+		}
+		right := readmeSlot + " " + forkSlot // constant visual width 15
+		// 1 pad + cursor + 1 + check + 2 spaces = 6 cols before name.
+		nameMax := innerW - 6 - lipgloss.Width(right) - 1
+		if nameMax < 4 {
+			nameMax = 4
+		}
+		name := truncWidth(row.Repo.Name, nameMax)
+		nst := selName
+		if !row.IsSelected {
+			nst = selDim
+		}
+		left := fmt.Sprintf(" %s %s  %s", cur, check, nst.Render(name))
+		gap := innerW - lipgloss.Width(left) - lipgloss.Width(right) - 1
+		if gap < 1 {
+			gap = 1
+		}
+		body = append(body, left+strings.Repeat(" ", gap)+right+" ")
+	}
+	for len(body) < state.ViewportHeight {
+		body = append(body, "")
 	}
 
-	rendered := len(rows)
-	if state.ViewportHeight > rendered {
-		for i := 0; i < state.ViewportHeight-rendered; i++ {
-			fmt.Fprintln(&b, dimStyle.Render(" ~"))
-		}
+	// --- in-box footer: filter chips + scroll position ---
+	var chips []string
+	if state.SoloOnly {
+		chips = append(chips, "solo")
 	}
-	fmt.Fprintln(&b)
+	if state.ExcludeForks {
+		chips = append(chips, "no-forks")
+	}
+	if state.ExcludeExistingReadme {
+		chips = append(chips, "no-readme")
+	}
+	leftFoot := ""
+	if len(chips) > 0 {
+		leftFoot = selDim.Render(" filters: " + strings.Join(chips, " · "))
+	}
+	if hidden := state.HiddenSelectedCount(); hidden > 0 {
+		leftFoot += selDim.Render(fmt.Sprintf("  (%d hidden selected)", hidden))
+	}
+	first, last := 0, 0
+	if visTotal > 0 {
+		first = state.ViewportStart + 1
+		last = state.ViewportStart + len(rows)
+	}
+	up, down := selDim.Render("▲"), selDim.Render("▼")
+	if state.ViewportStart == 0 {
+		up = " "
+	}
+	if last >= visTotal {
+		down = " "
+	}
+	pos := fmt.Sprintf("%s %d–%d / %d %s", up, first, last, visTotal, down)
+	gap := innerW - lipgloss.Width(leftFoot) - lipgloss.Width(pos) - 1
+	if gap < 1 {
+		gap = 1
+	}
+	body = append(body, "") // blank separator row
+	body = append(body, leftFoot+strings.Repeat(" ", gap)+selDim.Render(pos)+" ")
 
-	if m.filterMode {
-		fmt.Fprintf(&b, "%s\n", filterStyle.Render("filter: "+m.filterBuf+"_"))
-	} else {
-		nSel := len(state.Selected)
-		var toggles []string
-		if state.SoloOnly {
-			toggles = append(toggles, "solo")
-		}
-		if state.ExcludeForks {
-			toggles = append(toggles, "no-forks")
-		}
-		if state.ExcludeExistingReadme {
-			toggles = append(toggles, "no-readme")
-		}
-		togStr := ""
-		if len(toggles) > 0 {
-			togStr = "  [" + strings.Join(toggles, " · ") + "]"
-		}
-		hidden := state.HiddenSelectedCount()
-		hiddenStr := ""
-		if hidden > 0 {
-			hiddenStr = fmt.Sprintf(" (%d hidden)", hidden)
-		}
+	tag := fmt.Sprintf("%d/%d selected", len(state.Selected), len(state.Repos))
+	box := titledBox("writeme · select repositories", tag, body, innerW)
 
-		footer := fmt.Sprintf(
-			"arrows move · space toggle · / filter · s solo · F forks · r readme · "+
-				"enter confirm · a all · n none · q quit    %d/%d selected%s%s",
-			nSel, len(state.Repos), hiddenStr, togStr,
-		)
-		fmt.Fprint(&b, filterStyle.Render(footer))
+	var b strings.Builder
+	b.WriteString(box)
+	b.WriteString("\n")
+
+	// --- help / filter input below the box ---
+	switch {
+	case m.filterMode:
+		matches := fmt.Sprintf("%d matches", visTotal)
+		input := " " + selAccent.Render("›") + " " + m.filterBuf +
+			selAccent.Render("▏")
+		fgap := innerW - lipgloss.Width(input) - lipgloss.Width(matches) - 1
+		if fgap < 1 {
+			fgap = 1
+		}
+		hint := selDim.Render("live filter  ·  ") +
+			selKey.Render("enter") + selDim.Render("/") + selKey.Render("esc") +
+			selDim.Render(" back to list to toggle/confirm")
+		fbody := []string{
+			input + strings.Repeat(" ", fgap) + selDim.Render(matches) + " ",
+			"",
+			" " + hint,
+		}
+		b.WriteString("\n")
+		b.WriteString(titledBox("Filter", "", fbody, innerW))
+	case m.showHelp:
+		k := func(s string) string { return selKey.Render(s) }
+		lines := []string{
+			"  " + k("↑/↓ j/k") + "  move      " + k("g/G") + "  top / bottom",
+			"  " + k("space") + "    toggle    " + k("a/n") + "  all / none",
+			"  " + k("/") + "        filter    " + k("pgup/pgdn") + "  page",
+			"  " + k("s") + "        solo      " + k("F") + "  forks   " + k("r") + "  readme",
+			"  " + k("enter") + "    confirm   " + k("q") + "  quit    " + k("?") + "  close help",
+		}
+		b.WriteString("\n")
+		b.WriteString(strings.Join(lines, "\n"))
+	default:
+		hint := "  " + selKey.Render("↑↓") + " navigate  " +
+			selKey.Render("space") + " select  " +
+			selKey.Render("/") + " filter  " +
+			selKey.Render("enter") + " confirm  " +
+			selKey.Render("?") + " help  " +
+			selKey.Render("q") + " quit"
+		b.WriteString(selDim.Render(hint))
 	}
 
 	return b.String()

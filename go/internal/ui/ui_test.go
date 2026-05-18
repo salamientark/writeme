@@ -395,21 +395,48 @@ func TestSelectionModelViewNormal(t *testing.T) {
 	if !strings.Contains(got, "repo-one") {
 		t.Error("View should contain repo-one")
 	}
-	if !strings.Contains(got, "[x]") {
-		t.Error("View should show selected checkmarks")
+	if !strings.Contains(got, "◉") {
+		t.Error("View should show selected glyph")
 	}
-	if !strings.Contains(got, "FORK") {
-		t.Error("View should show FORK flag")
+	if !strings.Contains(got, "○") {
+		t.Error("View should show unselected glyph")
 	}
-	if !strings.Contains(got, "README") {
-		t.Error("View should show README flag")
+	if !strings.Contains(got, "fork") {
+		t.Error("View should show fork badge")
 	}
-	if !strings.Contains(got, "arrows move") {
-		t.Error("View should show footer")
+	if !strings.Contains(got, "readme") {
+		t.Error("View should show readme badge")
 	}
-	// Long name should be truncated
+	if !strings.Contains(got, "navigate") {
+		t.Error("View should show footer hint")
+	}
+	if !strings.Contains(got, "select repositories") {
+		t.Error("View should show titled box")
+	}
+}
+
+func TestSelectionModelViewTruncatesNarrow(t *testing.T) {
+	repos := []selection.Repo{
+		{Name: "repo-three-is-very-long-and-should-be-truncated"},
+	}
+	st := selection.NewSelectionState(repos, 0, nil, 0, 15)
+	m := &selectionModel{state: st, width: 40, height: 30}
+	got := m.View()
 	if strings.Contains(got, "repo-three-is-very-long-and-should-be-truncated") {
-		t.Error("long name should be truncated")
+		t.Error("long name should be truncated at narrow width")
+	}
+	if !strings.Contains(got, "…") {
+		t.Error("truncated name should end with ellipsis")
+	}
+}
+
+func TestSelectionModelViewHelpToggle(t *testing.T) {
+	repos := []selection.Repo{{Name: "a"}}
+	st := selection.NewSelectionState(repos, 0, nil, 0, 15)
+	m := &selectionModel{state: st, width: 80, height: 30, showHelp: true}
+	got := m.View()
+	if !strings.Contains(got, "top / bottom") {
+		t.Errorf("help view should show full keymap, got %q", got)
 	}
 }
 
@@ -419,8 +446,14 @@ func TestSelectionModelViewFilterMode(t *testing.T) {
 	m := &selectionModel{state: st, width: 80, height: 30, filterMode: true, filterBuf: "al"}
 
 	got := m.View()
-	if !strings.Contains(got, "filter: al_") {
-		t.Errorf("View in filter mode should show filter prompt, got %q", got)
+	if !strings.Contains(got, "Filter") {
+		t.Errorf("View in filter mode should show Filter box, got %q", got)
+	}
+	if !strings.Contains(got, "al") {
+		t.Errorf("View in filter mode should show typed buffer, got %q", got)
+	}
+	if !strings.Contains(got, "matches") {
+		t.Errorf("View in filter mode should show match count, got %q", got)
 	}
 }
 
@@ -691,7 +724,7 @@ func TestReviewModelViewNormal(t *testing.T) {
 	if !strings.Contains(got, "accept") {
 		t.Error("View should show accept hint")
 	}
-	if !strings.Contains(got, "# Title") {
+	if !strings.Contains(got, "Title") {
 		t.Error("View should show draft content")
 	}
 }
@@ -835,8 +868,8 @@ func TestRenderViewWithWidthCaches(t *testing.T) {
 	// Width change invalidates cache.
 	m.width = 120
 	m.renderView("README")
-	if m.cacheWidth != 120-4 {
-		t.Errorf("cacheWidth = %d, want %d", m.cacheWidth, 120-4)
+	if m.cacheWidth != 120-5 {
+		t.Errorf("cacheWidth = %d, want %d", m.cacheWidth, 120-5)
 	}
 }
 
@@ -847,7 +880,7 @@ func TestRenderViewTinyWidthClamps(t *testing.T) {
 		Total:        1,
 		CurrentDraft: "# X",
 	}
-	// width=10 → contentWidth=6 → clamped to 80 inside renderView
+	// width=10 → contentWidth=5 → clamped to 80 inside renderView
 	m := &reviewModel{
 		ctx:     ctx,
 		offsets: make([]int, len(reviewViews)),
