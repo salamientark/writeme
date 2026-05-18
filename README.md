@@ -27,10 +27,7 @@ The launcher checks dependencies, downloads the platform binary, verifies its ch
 - **Three ship modes** — `pr` (branch + `gh pr create`), `direct` (commit on default branch), or `commit-only`.
 - **Blast-radius guard** — Claude may only touch `README.md`; any other modified file aborts the run.
 - **Secret scanner** — flags AWS keys, GitHub tokens, OpenAI keys, and private-key headers in drafts.
-- **Resumable** — `--resume` skips repos already processed in the state file.
-- **Parallel generation** — configurable worker pool (`--parallel`) for concurrent Claude invocations.
-- **SHA-pinned install** — `EXPECTED_SHA` verifies the binary checksum before any code runs.
-- **Zero footprint** — single static binary, no runtime deps, no shell config touched.
+- **Safe & fast** — resumable runs, parallel generation, SHA-pinned binary, zero footprint (single static binary, no shell config touched).
 
 ## Requirements
 
@@ -62,40 +59,16 @@ For each selected repo:
 writeme [FLAGS]
 ```
 
-| Flag | Env | Effect |
-|------|-----|--------|
-| `--mode pr\|direct\|commit-only` | — | Skip per-repo mode prompt. |
-| `--dry-run` | — | Run full loop, never push. |
-| `--repos-dir <path>` | `GH_README_REPOS_DIR` | Override repo-clone dir. |
-| `--claude-timeout <sec>` | `CLAUDE_TIMEOUT` | Claude subprocess timeout (default 300). |
-| `--resume` | — | Skip already-processed repos from state file. |
-| `--skip-ci` | `SKIP_CI` | Append `[skip ci]` to commit message. |
-| `--clean` | — | Remove cache dir and exit. |
-| `--plain` | — | Disable TUI (plain-text mode). |
-| `--parallel <n>` | `WRITEME_PARALLEL` | Parallel Claude workers (1–8, default 3). |
-| `--version` | — | Print version and exit. |
-| — | `LIMIT` | Repo cap (hard max 1000). |
-| — | `GH_USER` | Override authed user. |
-| — | `COMMIT_MESSAGE` | Override commit message template. |
+| Flag | Effect |
+|------|--------|
+| `--mode pr\|direct\|commit-only` | Skip per-repo mode prompt. |
+| `--dry-run` | Run full loop, never push. |
+| `--resume` | Skip already-processed repos from state file. |
+| `--parallel <n>` | Parallel Claude workers (1–8, default 3). |
+| `--plain` | Disable TUI (plain-text mode). |
+| `--version` | Print version and exit. |
 
-Launcher-only env vars: `NUKE_ON_FAIL=1` wipes sandbox on failure; `VERSION` selects binary version; `EXPECTED_SHA` pins checksum; `SKIP_DEP_CHECK=1` bypasses dep gating (testing only).
-
-### TUI controls
-
-**Selection screen** — header shows `(N selected of M)`; each row: `[x] [HAS README] <name> <pushed_at>`.
-
-```
-↑/↓  move        space  toggle        a  all
-n    none        enter  confirm       q  quit
-/    filter      esc    clear filter
-```
-
-**Review screen:**
-
-```
-a/d   accept / discard      r   redo (re-generate)
-↑/↓   scroll diff            q   quit
-```
+Run `writeme --help` for the full flag and environment-variable reference. TUI key hints are shown in the on-screen footer.
 
 ## Storage layout
 
@@ -110,16 +83,6 @@ Inside the sandbox (default):
 
 Outside the launcher (direct binary invocation), paths fall back to `${XDG_CACHE_HOME:-~/.cache}/gh-readme-pipeline/`.
 
-## Exit codes
-
-| Code | Meaning |
-|------|---------|
-| `0` | Clean success — sandbox wiped. |
-| `1` | Missing dep, gh auth, GraphQL/clone fatal, generic error. |
-| `2` | Final scan found dirty tree or unpushed commits — sandbox preserved. |
-| `3` | Launcher-only: checksum mismatch, no code executed. |
-| `130` | Ctrl+C — state flushed, summary printed. |
-
 ## Security
 
 > [!IMPORTANT]
@@ -130,32 +93,14 @@ Outside the launcher (direct binary invocation), paths fall back to `${XDG_CACHE
 - Blast-radius guard prevents Claude from touching anything except `README.md`.
 - Checksum pinning protects against binary tampering. Verify `EXPECTED_SHA` out-of-band against the release checksums.
 
-## Development
-
-```bash
-git clone https://github.com/salamientark/writeme
-cd writeme/go
-
-make build              # build binary
-make test               # run tests
-make test-race          # race detector
-make lint vet           # lint + vet
-make coverage-gate      # 80% coverage gate
-make release-snapshot   # build release snapshot
-```
-
-Run the binary directly (skips the launcher sandbox); state falls back to `~/.cache/gh-readme-pipeline/`:
-
-```bash
-go run ./cmd/writeme --dry-run
-```
-
-**TUI smoke test:** run `--dry-run` against a test account; verify arrows move the cursor, space toggles `[x]`, `a`/`n` bulk-select, resize keeps the viewport coherent, `q` aborts cleanly; on the review screen, scroll the diff and cycle accept/redo/discard.
-
 ## Troubleshooting
 
-- **Sandbox preserved after failure** — stderr prints `kept /tmp/writeme.XXXXXX (exit=N)`. Inspect, then `rm -rf` manually.
-- **Checksum mismatch** — downloaded binary doesn't match `EXPECTED_SHA`. Verify the SHA256 against the release page.
+- **Sandbox preserved after failure** — stderr prints `kept /tmp/writeme.XXXXXX (exit=N)`. Inspect, then `rm -rf` manually. Exit `2` means a dirty tree or unpushed commits were left behind.
+- **Checksum mismatch** — downloaded binary doesn't match the release checksum (exit `3`, no code ran). Verify the SHA256 against the release page.
 - **`gh auth: not authenticated`** — run `gh auth login`, retry.
-- **Stuck lock** — another process holds `$XDG_CACHE_HOME/gh-readme-pipeline/state/lock`. Identify with `fuser`; remove only if no live pipeline.
+- **Stuck lock** — another process holds the run lock. Identify with `fuser`; remove only if no live pipeline.
 - **Rate-limited** — GraphQL `remaining < 10` triggers a sleep up to 60s; longer waits abort. Wait for `resetAt` and re-run.
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test, and local-run instructions.
