@@ -56,16 +56,29 @@ func RunSelection(repos []selection.Repo) SelectionResult {
 
 func (m *selectionModel) Init() tea.Cmd { return nil }
 
+// viewportFor returns the list height that keeps the whole render within the
+// terminal. Normal mode reserves 6 lines of chrome; filter mode also shows
+// the Filter box below the list (~6 extra lines), so reserve more.
+func viewportFor(termHeight int, filtering bool) int {
+	reserve := 6
+	min := 5
+	if filtering {
+		reserve = 12
+		min = 3
+	}
+	h := termHeight - reserve
+	if h < min {
+		h = min
+	}
+	return h
+}
+
 func (m *selectionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		h := msg.Height - 6
-		if h < 5 {
-			h = 5
-		}
-		m.state = m.state.ResizeViewport(h)
+		m.state = m.state.ResizeViewport(viewportFor(msg.Height, m.filterMode)).Move(0)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -81,11 +94,9 @@ func (m *selectionModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "esc":
+	case "esc", "enter":
 		m.filterMode = false
-		return m, nil
-	case "enter":
-		m.filterMode = false
+		m.state = m.state.ResizeViewport(viewportFor(m.height, false)).Move(0)
 		return m, nil
 	case "backspace":
 		if r := []rune(m.filterBuf); len(r) > 0 {
@@ -112,6 +123,7 @@ func (m *selectionModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.filterMode = true
 		m.filterBuf = m.state.Filter
+		m.state = m.state.ResizeViewport(viewportFor(m.height, true)).Move(0)
 		return m, nil
 	case "?":
 		m.showHelp = !m.showHelp
